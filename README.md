@@ -346,6 +346,29 @@ TikTok LIVE → v3 capture/normalize → moderator /api/comment → verdict
     flagged → SQLite flags table + dashboard, dropped from forward
 ```
 
+### Setup contract (production-first)
+
+Existing deployments adopt the moderator with **one config change, zero
+code changes, zero new accounts, zero new tokens**:
+
+- Bridge's `.env`: `TTLIVE_URL` now points at the moderator (was: the
+  TTLive server). Nothing else changes upstream.
+- Moderator's env (3 vars): `PORT`, `UPSTREAM_TTLIVE_URL` (= the TTLive
+  server), and the same `API_TOKEN` passed through on both hops.
+- No new secrets anywhere: the bridge→moderator and moderator→TTLive hops
+  reuse the existing TTLive `API_TOKEN` (fail-closed on bad token, same as
+  today). No TikTok login, no session cookies, no extra Euler keys.
+- Overlays ship inside the moderator: `/overlay/chat` (clean chat wall —
+  drop straight into OBS as a Browser Source) and `/overlay/mod` (mod
+  console). No second service to deploy or host.
+- Production defaults: **fail-open**. If the classifier or the upstream
+  forward errors, the message goes through and the failure is logged
+  loudly. A filter outage must never kill the stream or silence the
+  avatar. SQLite holds `flags(...)`: single file, no migrations, no
+  extra database.
+- Later: one `docker compose` (bridge + moderator + TTLive) with the same
+  env contract — same setup, one command.
+
 - [ ] HTTP service accepting `TikTokComment` JSON on `/api/comment`
       (same shape the bridge already posts)
 - [ ] `local_rules()` + one AI classifier (Perspective or omni-moderation)
