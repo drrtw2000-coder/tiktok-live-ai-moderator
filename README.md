@@ -14,18 +14,25 @@ and gives the streamer two things TikTok doesn't:
 
 ## TL;DR
 
-- TikTok has **no official LIVE API** and **no third-party widget store** (no
-  Twitch-Extensions equivalent). LIVE Studio's built-in widgets (alert source,
-  chatbox, goal, leaderboard, countdown) are first-party only.
-- Every third-party LIVE tool works the same way: **an external service reads
-  the Webcast WebSocket** (the same data any viewer receives) **and renders
-  results as an OBS Browser Source / web dashboard**.
-- For an AI moderator that model is fine: reading events is enough to build a
-  filtered chat + review queue. The only hard limit is **taking action** —
-  programmatic comment deletion / bans are not officially supported (see
+- TikTok has **no official LIVE chat/mod API** and **no third-party widget
+  store** (no Twitch-Extensions equivalent). LIVE Studio's built-in widgets
+  (alert source, chatbox, goal, leaderboard, countdown) are first-party only.
+- **Reading is a solved, commercial problem.** The proven stack — running in
+  production in the `tiktok-events` project for ~1.5 years — is the
+  `tiktok-live-connector` library plus an **Euler Stream `signApiKey`**, a
+  paid service (eulerstream.com) that signs the WebSocket connection so it
+  holds up in production. Without a key the free tier is severely
+  rate-limited.
+- Every third-party LIVE tool therefore works the same way: **an external
+  service reads the Webcast WebSocket** (the same data any viewer receives)
+  **and renders results as a bridge, dashboard or overlay**.
+- For an AI moderator, reading is enough to build a filtered chat + review
+  queue. The **real limit is writing**: no sanctioned way to post replies,
+  delete comments, or mute/ban — only fragile session-cookie hacks on
+  internal endpoints (see
   [The hard part](#5-the-hard-part-taking-action)).
-- MVP is genuinely weekend-sized for a single streamer; turning it into a SaaS
-  is the real work.
+- MVP is weekend-sized — and most of it already exists in `tiktok-events` v3
+  (see §7). Turning it into a SaaS is the real work.
 
 ---
 
@@ -35,7 +42,7 @@ and gives the streamer two things TikTok doesn't:
 TikTok LIVE stream
       │  Webcast WebSocket: chat · gifts · joins · likes · shares · follows
       ▼
-Listener service
+Listener service — REUSE `tiktok-events` v3 capture, don't rebuild
       │      (async queue — never block the event loop; big streams push
       │       10k+ events/min, heavy work must be dropped or deferred)
       ▼
@@ -71,38 +78,46 @@ Action layer
 
 Two routes, both unofficial:
 
-### A. Prototype — open source, free, DIY
+### A. The read stack: `tiktok-live-connector` + Euler Stream signing
 
-Reverse-engineered libraries read the same Webcast WebSocket any viewer gets.
-No login, no app registration — just the streamer's `@username`.
+The connector reads the same Webcast WebSocket any viewer gets. No TikTok
+login, no app registration — just the streamer's `@username`. What makes it
+production-grade is **Euler Stream**: a commercial signing service. You pass
+its API key as `signApiKey` to the connection constructor and the WebSocket
+holds up — this is the exact setup running in `tiktok-events` v2/v3 with no
+issues (Euler's own guidance: "For most users, passing signApiKey to the
+TikTokLiveConnection constructor is enough.").
 
-- Python: `TikTokLive` (isaackogan) — `py -m pip install TikTokLive`
-- Node.js: `tiktok-live-connector` (Zerody)
+- Node.js: `tiktok-live-connector@^2.1.x` (Zerody)
+- Signing: Euler Stream key (`TIKTOK_EULER_API_KEY`); without it the free
+  tier is severely rate-limited
+- Alt for quick prototypes: Python `TikTokLive` (isaackogan)
 
-```python
-from TikTokLive import TikTokLiveClient
-from TikTokLive.events import CommentEvent, GiftEvent
+```ts
+import { TikTokLiveConnection, WebcastEvent }
+  from 'tiktok-live-connector';
 
-client = TikTokLiveClient(unique_id="@target_streamer")
+// Euler Stream signs the connection → production-grade stability
+// (exact setup running in tiktok-events v2/v3)
+const conn = new TikTokLiveConnection('@target_streamer', {
+  signApiKey: process.env.TIKTOK_EULER_API_KEY,
+});
 
-@client.on(CommentEvent)
-async def on_comment(event: CommentEvent):
-    await moderate(event.user.unique_id, event.comment)
+conn.on(WebcastEvent.CHAT, (msg) => moderate(msg.user.uniqueId, msg.comment));
+// … GIFT (streak-aware), MEMBER, SOCIAL, SUBSCRIBE, FOLLOW, SHARE,
+// QUESTION_NEW, battles, likes …
 
-@client.on(GiftEvent)
-async def on_gift(event: GiftEvent):
-    if event.streaking:      # skip streak intermediates
-        return
-    log_gift(event.user.unique_id, event.gift.name, event.repeat_count)
-
-client.run()
+await conn.connect();
 ```
 
-- **Pros:** free, instant start, full event surface.
-- **Cons:** reverse engineering — TikTok changes signing/protocol without
-  notice. Signing currently relies on a community server (Euler Stream) with
-  free rate limits. Fine for 1-10 streams, risky as the backbone of a paid
-  product.
+- **Pros:** battle-tested (~1.5 years in `tiktok-events`), instant start,
+  full event surface, commercial signing so connections hold.
+- **Cons:** the data path is still unofficial (TikTok can change the Webcast
+  protocol; Euler absorbs most of that). Free tier without a key is useless
+  for production. And either way: **read-only** — the connector ships zero
+  write methods, and the requested moderator API
+  ([issue #258](https://github.com/zerodytrash/TikTok-Live-Connector/issues/258))
+  was closed unimplemented.
 
 ### B. Production — managed LIVE API
 
@@ -123,9 +138,12 @@ client.on('gift', e => logGift(e.user.uniqueId, e.giftName, e.diamondCount))
 await client.connect()
 ```
 
-All providers in this space are unofficial / not affiliated with TikTok.
+All providers in this space are unofficial / not affiliated with TikTok. Their documented capabilities cover reads; message-sending or mod actions are not openly documented.
 
-**Plan: build the MVP on route A, switch to B when selling to streamers.**
+**Plan: no new listener — the MVP consumes `tiktok-events` v3's existing
+capture pipeline as a filtering proxy (see §7). Route B stays an option for
+a multi-tenant SaaS later: same shape (read WebSocket + REST), write access
+not openly documented.**
 
 ---
 
@@ -146,12 +164,19 @@ All providers in this space are unofficial / not affiliated with TikTok.
 Lifecycle: connect → `roomInfo`; stream ends → socket closes → poll
 "is live" or use webhooks before reconnecting. Don't hammer reconnects.
 
+> Rich context comes on the events themselves: `user` carries `isModerator`,
+> `isSubscriber`, `topGifterRank`, badges and follow info, and (with
+> extended gift info) diamond values — the `tiktok-events` normalizer
+> already flattens all of this into `TikTokComment.meta` for the pipeline.
+
 ---
 
 ## 3. The AI moderation pipeline
 
 Two stages — cheap first, AI only when needed. This keeps cost and latency
-sane on big streams.
+sane on big streams. Input is the **normalized `TikTokComment`** from the
+v3 bridge (§7): `[TAG]`-prefixed text plus `meta` (event type, badges,
+`isModerator`, `topGifterRank`).
 
 ```python
 import re
@@ -185,6 +210,20 @@ async def moderate(user_id, text):
 | Detoxify (local, PyTorch) | free | runs on your box, private, no per-call latency |
 | Llama Guard / small LLM | self-host | best context understanding, most work |
 
+### Volume lessons (learned in `tiktok-events` v3)
+
+- **Likes: off by default.** Like events are extremely high-volume; batch
+  (10 s windows) or ignore them for moderation.
+- **Joins: track, don't forward.** On busy streams joins flood (~1/sec);
+  keep them for `isFirstTime` detection, don't feed the classifier.
+- **Streak-aware gifts:** aggregate streakable gifts on a ~30 s timeout and
+  act once on the final event.
+- **Dedupe + no replays:** ring-buffer dedupe on message IDs, and
+  `processInitialData=false` on reconnect to avoid backlog floods.
+- **Reconnect discipline:** stale-connection detection, backoff with
+  slow-poll fallback — see v3's `connection-manager.ts`. The moderator
+  inherits all of this for free by reusing the pipeline.
+
 ### Hardening ideas
 
 - Normalize before matching (leetspeak, padding, unicode homoglyphs).
@@ -202,7 +241,15 @@ Do **not** try to inject into TikTok itself — you can't. Ship two UIs instead.
 
 ### a) OBS overlay (Browser Source)
 
-A tiny HTTP server broadcasts events to the browser via SSE:
+**Proxy mode (recommended with `tiktok-events`):** instead of building a
+separate SSE server, the moderator exposes the same `/api/comment` endpoint
+the TTLive avatar server uses. Point `bridge-to-ttlive`'s `TTLIVE_URL` at
+the moderator; it forwards only clean messages to the real TTLive server
+(passing the API token through). Zero changes to `tiktok-events`, and the
+avatar only ever "hears" clean chat.
+
+Standalone alternative — a tiny HTTP server broadcasts events to the
+browser via SSE:
 
 ```
 listener → Express/SSE (/events) → overlay.html → OBS Browser Source
@@ -237,13 +284,28 @@ Web page for the streamer / mod team:
 
 ## 5. The hard part: taking action
 
-Reading is unsupported-but-reliable. **Writing is the wall:**
+**Reading is solved and commercial (`tiktok-events` runs it in prod).
+Writing is the wall** — no sanctioned write API exists, and no
+open-source library ships write methods:
 
-- No official endpoint to delete another user's comment or ban a user.
-- Open-source libraries are read-only by design.
-- Fully automating TikTok's internal moderation endpoints (emulator /
-  Playwright driving the app) works technically but is a fast route to a
-  suspended account — **not planned for v1**.
+- The connector has **zero** write methods; the request for mod methods
+  ([issue #258](https://github.com/zerodytrash/TikTok-Live-Connector/issues/258))
+  was closed unimplemented.
+- Even real mods are limited: per that thread, a moderator can **mute and
+  block** — there is **no single-message delete**.
+- Managed APIs document reads; message-sending and mod actions are not
+  openly documented.
+
+The only proven write path is unofficial — **session-cookie bots**
+([example](https://github.com/AutoFTbot/tiktok-ai-auto-reply-live)): run a
+logged-in TikTok account, lift `TIKTOK_SESSION_ID` + `tt-target-idc` cookies
+from a browser session, and call TikTok's internal `webcast.tiktok.com`
+endpoints to post chat messages. Reality check from that project: cookies
+expire in days, keep ~2 s between messages, and the account gets
+banned/limited if it looks like spam. A **moderator account's** session is
+the only route to mute/block actions — unproven in open source, same
+fragility. UI automation (emulator / Playwright driving the real app) is
+the other fallback — slower, same ban risk — **not planned for v1**.
 
 What real products do:
 
@@ -251,8 +313,9 @@ What real products do:
    streamer reads that instead of TikTok's chat. This alone is 80% of the
    value.
 2. **Warning bot** — a dedicated TikTok account (moderator in the stream) posts
-   `⚠️ @user please keep it friendly` when AI flags. Public-shame effect, works
-   today with zero API access.
+   `⚠️ @user please keep it friendly` when AI flags, via the session-cookie
+   pattern above (dedicated account, ~2 s throttling). Public-shame effect,
+   works today.
 3. **Human-in-the-loop** — AI flags with severity + reason; a human clicks ban
    in TikTok's UI. Roughly 10x faster than reading raw chat.
 
@@ -272,20 +335,37 @@ What real products do:
 
 ## 7. MVP scope (weekend)
 
-- [ ] Python listener (`TikTokLive`) for one hardcoded `@username`
-- [ ] `local_rules()` + one AI classifier (Perspective or omni-moderation)
-- [ ] Console log of verdicts
-- [ ] `localhost:3333` OBS overlay with filtered chat + gift alerts
-- [ ] SQLite table: `flags(user, text, verdict, score, ts)`
-- [ ] Test: 1 hour on a live stream with a friend spamming toxic test messages
+No new TikTok listener — `tiktok-events` v3 already captures, normalizes
+(`TikTokComment`: `[TAG]`-prefixed text + `meta`), dedupes and bridges.
+The moderator plugs in as a **filtering proxy** in front of the TTLive
+avatar server:
 
-Out of scope for MVP: multi-stream, auth, billing, bot account, ban automation.
+```
+TikTok LIVE → v3 capture/normalize → moderator /api/comment → verdict
+    ok      → forward to TTLive server (unchanged feed)
+    flagged → SQLite flags table + dashboard, dropped from forward
+```
+
+- [ ] HTTP service accepting `TikTokComment` JSON on `/api/comment`
+      (same shape the bridge already posts)
+- [ ] `local_rules()` + one AI classifier (Perspective or omni-moderation)
+      over `text` + `meta` (event type, badges, `isModerator`…)
+- [ ] Forward clean messages to the real `TTLIVE_URL` (API token passed
+      through); point the bridge's `TTLIVE_URL` at the moderator
+- [ ] SQLite table: `flags(user, text, verdict, score, ts)`
+- [ ] Dashboard page: severity feed + review queue (overlay optional —
+      the TTLive avatar already renders the clean feed)
+- [ ] Test: 1 hour on a live stream with toxic test messages; verify drops,
+      latency < 1.5 s, and that TTLive never sees flagged text
+
+Out of scope for MVP: its own TikTok connection, multi-stream, auth,
+billing, bot account, ban automation.
 
 ---
 
 ## 8. Roadmap
 
-**v1 — single-streamer tool** (the MVP above).
+**v1 — single-streamer tool** (the proxy MVP above, reusing `tiktok-events` v3).
 
 **v2 — SaaS:**
 - managed LIVE API with per-streamer JWT, multi-stream concurrency
@@ -320,7 +400,9 @@ WebSocket plumbing.
 
 ---
 
-*Concept doc written 2026-09-26. Everything here is unofficial and not
-affiliated with TikTok / ByteDance.*
+*Concept doc written 2026-09-26 (read/write corrections 2026-09-26).
+Everything here is unofficial and not affiliated with TikTok / ByteDance.
+Read path: `tiktok-live-connector` + Euler Stream commercial signing,
+battle-tested in `tiktok-events` v2/v3.*
 
 
