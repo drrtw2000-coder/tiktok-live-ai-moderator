@@ -2,10 +2,12 @@
 REM ===========================================================================
 REM  Upstream bridge - TikTok LIVE -> moderator -> TTLive (Windows)
 REM
-REM    run.bat @streamername [--test | --inject]
+REM    run.bat @streamername [--wait] [--test | --inject]
 REM
 REM    default  connect to LIVE, forward every event to the moderator (:3002),
 REM             which forwards clean events on to TTLive (:3001)
+REM    --wait   streamer NOT live yet? Pause first ("Press ENTER when LIVE"),
+REM             then connect. If the bridge drops/exits, ENTER retries, q quits.
 REM    --test   read-only capture test (prints events, forwards nothing)
 REM    --inject manual chat injector (no LIVE stream needed)
 REM
@@ -16,10 +18,26 @@ setlocal EnableExtensions
 title Upstream bridge
 cd /d "%~dp0" 2>nul
 
-if "%~1"=="" (
-  echo Usage: run.bat @streamername [--test ^| --inject]
-  echo Example: run.bat @someCreator
-  echo          run.bat @someCreator --test
+REM -- parse args: username + flags in any order --------------------------------
+set "USER="
+set "MODE=bridge"
+set "WAIT="
+:parseargs
+if "%~1"=="" goto argsdone
+if /i "%~1"=="--wait" set "WAIT=1"
+if /i "%~1"=="--test" set "MODE=test"
+if /i "%~1"=="--inject" set "MODE=inject"
+if not "%~1"=="--wait" if not "%~1"=="--test" if not "%~1"=="--inject" if not defined USER set "USER=%~1"
+shift
+goto parseargs
+:argsdone
+
+if /i "%MODE%"=="inject" goto inject
+if "%USER%"=="" (
+  echo Usage: run.bat @streamername [--wait] [--test ^| --inject]
+  echo Example: run.bat @ahappyspell
+  echo          run.bat @ahappyspell --wait   (not live yet: ENTER when live)
+  echo          run.bat @ahappyspell --test
   echo          run.bat --inject
   pause
   exit /b 1
@@ -42,15 +60,12 @@ if not exist "node_modules" (
   )
 )
 
-if /i "%~1"=="--inject" goto inject
-if /i "%~2"=="--inject" goto inject
-if /i "%~2"=="--test" goto test
-if /i "%~1"=="--test" goto test
+if /i "%MODE%"=="test" goto test
 goto bridge
 
 :test
-echo [i] Read-only capture test for %~1 (forwards nothing)...
-call npx ts-node test-tiktok.ts %~1
+echo [i] Read-only capture test for %USER% (forwards nothing)...
+call npx ts-node test-tiktok.ts %USER%
 goto done
 
 :inject
@@ -59,11 +74,22 @@ call npx ts-node inject-comments.ts
 goto done
 
 :bridge
-echo [i] Bridging %~1 -^> moderator (TTLIVE_URL from .env)...
-call npx ts-node bridge-to-ttlive.ts %~1
-goto done
+if defined WAIT (
+  echo.
+  echo [i] %USER% is not live yet - no problem. Time it yourself for an
+  echo     instant connect instead of waiting on slow-poll:
+  set /p "GO=Press ENTER when %USER% goes LIVE to connect (Ctrl+C to cancel): "
+  set "WAIT="
+)
+echo [i] Bridging %USER% -^> moderator (TTLIVE_URL from .env)...
+call npx ts-node bridge-to-ttlive.ts %USER%
+echo.
+echo Bridge exited (code %ERRORLEVEL%).
+set /p "RETRY=Press ENTER to (re)connect, or type q + ENTER to quit: "
+if /i "%RETRY%"=="q" goto done
+goto bridge
 
 :done
 echo.
-echo Bridge stopped (exit %ERRORLEVEL%).
+echo Bridge stopped.
 pause

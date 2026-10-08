@@ -49,6 +49,7 @@ cd upstream
 copy .env.example .env   # set API_TOKEN (= moderator's), add Euler key for prod
 npm install              # one-time: dotenv + tiktok-live-connector + ts-node
 run.bat @streamername    # bridge -> moderator :3002 -> TTLive :3001
+run.bat @streamername --wait  # not live yet: ENTER when live; ENTER retries if it drops
 ```
 
 Or manually:
