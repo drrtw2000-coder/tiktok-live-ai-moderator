@@ -386,6 +386,24 @@ billing, bot account, ban automation.
 
 ---
 
+## Run it (single entry: `a.bat`)
+
+One window, one command — starts moderator + LIVE bridge, prints the Studio
+source link. From the repo root (PowerShell needs `.\`):
+
+```powershell
+.\a.bat @ahappyspell                 # live: TikTok -> moderator :3002 -> TTLive
+.\a.bat @ahappyspell --wait --tunnel # not live yet / need a public link
+.\a.bat --demo                       # offline: scripted chat, no LIVE needed
+```
+
+* Chat source (Studio Link / OBS): `http://127.0.0.1:3002/overlay/chat`
+  (or `<tunnel-url>/overlay/chat` with `--tunnel`)
+* Mod console (never on stream): `/overlay/mod?token=MOD_TOKEN`
+* `py moderator/server.py --check` = startup self-test (env + pipeline).
+
+---
+
 ## 8. Roadmap
 
 **v1 — single-streamer tool** (the proxy MVP above, reusing `tiktok-events` v3).

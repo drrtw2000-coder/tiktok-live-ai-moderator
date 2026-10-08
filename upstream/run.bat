@@ -60,6 +60,21 @@ if not exist "node_modules" (
   )
 )
 
+REM -- preflight: node present + moderator health (fail fast, not 500 forwards) ----
+where node >nul 2>nul
+if errorlevel 1 (
+  echo [ERROR] Node.js not found. Install Node.js 20+ from https://nodejs.org/
+  pause
+  exit /b 1
+)
+powershell -NoProfile -Command "try { (Invoke-WebRequest -Uri 'http://127.0.0.1:3002/healthz' -TimeoutSec 3 -UseBasicParsing).StatusCode } catch { exit 1 }" >nul 2>nul
+if errorlevel 1 (
+  echo [ERROR] Moderator not answering http://127.0.0.1:3002/healthz
+  echo         Start it first:  a.bat @streamername   (or run.bat in repo root)
+  pause
+  exit /b 1
+)
+
 if /i "%MODE%"=="test" goto test
 goto bridge
 

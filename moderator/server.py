@@ -198,25 +198,54 @@ def save_flag(comment: dict, verdict: dict):
         log("!! sqlite save failed:", e)
 
 
+fwd_pool: queue.Queue | None = None   # single-flight upstream lane (kill thread storms)
+try:
+    fwd_pool = queue.Queue(maxsize=200)
+except Exception:
+    fwd_pool = None
+
+def _forward_worker():
+    """One daemon drains the forward queue. Fail-open: drops + logs when full/down."""
+    assert fwd_pool is not None
+    while True:
+        try:
+            comment, token = fwd_pool.get()
+        except Exception:
+            time.sleep(0.05)
+            continue
+        if not UPSTREAM:
+            continue
+        try:
+            body = json.dumps(comment).encode()
+            req = urllib.request.Request(
+                UPSTREAM + "/api/comment", data=body, method="POST",
+                headers={"Content-Type": "application/json",
+                         **({"x-api-token": token} if token else {})})
+            with urllib.request.urlopen(req, timeout=3) as r:
+                if r.status == 200:
+                    bump("forwarded")
+                else:
+                    bump("forward_errors")
+                    log(f"!! upstream responded {r.status} (fail-open, kept on overlay)")
+        except Exception as e:
+            bump("forward_errors")
+            log(f"!! upstream forward failed (fail-open, kept on overlay): {e}")
+
+
+if fwd_pool is not None:
+    threading.Thread(target=_forward_worker, daemon=True,
+                     name="upstream-forward").start()
+
+
 def forward_upstream(comment: dict, token: str):
     """Best-effort forward of CLEAN messages. Fail-open: errors only logged."""
-    if not UPSTREAM:
+    if not UPSTREAM or fwd_pool is None:
         return
     try:
-        body = json.dumps(comment).encode()
-        req = urllib.request.Request(
-            UPSTREAM + "/api/comment", data=body, method="POST",
-            headers={"Content-Type": "application/json",
-                     **({"x-api-token": token} if token else {})})
-        with urllib.request.urlopen(req, timeout=3) as r:
-            if r.status == 200:
-                bump("forwarded")
-            else:
-                bump("forward_errors")
-                log(f"!! upstream responded {r.status} (fail-open, kept on overlay)")
-    except Exception as e:
+        fwd_pool.put_nowait((comment, token))
+    except queue.Full:
         bump("forward_errors")
-        log(f"!! upstream forward failed (fail-open, kept on overlay): {e}")
+        log("!! upstream queue full (fail-open, kept on overlay)")
 
 
 def process_comment(comment: dict, inbound_token: str) -> dict:
@@ -253,8 +282,7 @@ def process_comment(comment: dict, inbound_token: str) -> dict:
         mod_history.append(event)
         broadcast("chat", event)
         broadcast("mod", event)
-        threading.Thread(target=forward_upstream,
-                         args=(comment, inbound_token), daemon=True).start()
+        forward_upstream(comment, inbound_token)  # queued, single-flight (fail-open)
     return {"ok": True, "allowed": verdict["allowed"], "verdict": verdict,
             "verdict_ms": ms}
 
@@ -635,7 +663,44 @@ class Handler(BaseHTTPRequestHandler):
         self._json(200, result, {"X-Verdict-Ms": str(result.get("verdict_ms", 0))})
 
 
+def self_check() -> int:
+    """Startup self-test: pipeline + contract, no network. 0 = pass."""
+    import sys
+    fails = []
+    weak = API_TOKEN in ("", "changeme-use-same-value-in-bridge-env",
+                         "changeme-generate-with-secrets-token_hex-32") or \
+        (API_TOKEN and len(API_TOKEN) < 16)
+    if REQUIRE_AUTH and (not API_TOKEN or weak):
+        fails.append("API_TOKEN missing/weak (POST /api/comment will 401 everything)")
+    if REQUIRE_AUTH and not MOD_TOKEN:
+        fails.append("MOD_TOKEN unset (tunneled /overlay/mod + /api/flags refuse all)")
+    cases = [
+        ({"id": "chk-1", "userId": "u", "username": "u", "text": "hello!",
+          "timestamp": 1, "meta": {"eventType": "comment"}}, True, "clean allowed"),
+        ({"id": "chk-2", "userId": "u", "username": "u",
+          "text": "CHECK http://bit.ly/x NOW", "timestamp": 1,
+          "meta": {"eventType": "comment"}}, False, "link blocked"),
+        ({"id": "chk-3", "userId": "u", "username": "u",
+          "text": "[GIFT] @u sent Rose x1 (1)", "timestamp": 1,
+          "meta": {"eventType": "gift"}}, True, "gift passthrough"),
+    ]
+    for comment, want_allowed, name in cases:
+        try:
+            got = process_comment(dict(comment), "")["allowed"]
+            if bool(got) != want_allowed:
+                fails.append(f"pipeline: {name} (want allowed={want_allowed})")
+        except Exception as e:
+            fails.append(f"pipeline raised on {name}: {e}")
+    for f in fails:
+        log(f"!! check: {f}")
+    log("check: PASS" if not fails else f"check: {len(fails)} FAIL(s)")
+    return 0 if not fails else 2
+
+
 def main():
+    import sys
+    if "--check" in sys.argv:
+        raise SystemExit(self_check())
     srv = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
     srv.daemon_threads = True
     weak = API_TOKEN in ("", "changeme-use-same-value-in-bridge-env") or \
