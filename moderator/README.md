@@ -8,7 +8,15 @@ Easiest — from the repo root double-click **`run.bat`** (or `run.bat demo` to 
 fire scripted chat/gift/spam at the overlay). It creates `moderator\.env` on first
 run, opens both overlays in your browser, and starts the server.
 
-Manual equivalent:
+Live input (real TikTok chat) — from the repo root:
+
+```powershell
+cd upstream
+copy .env.example .env        # set API_TOKEN (= moderator's), add TIKTOK_EULER_API_KEY
+run.bat @streamername         # LIVE -> moderator :3002 -> TTLive :3001
+```
+
+Offline demo (no live stream needed) — manual equivalent:
 
 ```powershell
 cd moderator
