@@ -273,9 +273,11 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Referrer-Policy", "no-referrer")
         if ctype.startswith("text/html"):
             # Chat overlay must be embeddable as a Studio Link source.
+            # media-src lets ?video= play local files + remote URLs.
             self.send_header("Content-Security-Policy",
                              "default-src 'none'; style-src 'unsafe-inline'; "
                              "script-src 'unsafe-inline'; connect-src 'self'; "
+                             "media-src 'self' https: data: blob:; "
                              "img-src data:; base-uri 'none'; form-action 'none'")
         for k, v in (extra or {}).items():
             self.send_header(k, v)
@@ -361,6 +363,26 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", "0")
         self.end_headers()
 
+    def _history_snapshot(self, channel, since_id=None, limit=50):
+        """Newest-first slice of the ring buffer for polling fallback.
+
+        Cloudflare/ngrok free tunnels buffer SSE, so overlays behind a
+        tunnel poll this instead. Localhost keeps SSE (instant)."""
+        try:
+            limit = max(1, min(200, int(limit)))
+        except (ValueError, TypeError):
+            limit = 50
+        buf = chat_history if channel == "chat" else mod_history
+        items = list(buf)
+        if since_id:
+            try:
+                idx = next(i for i, e in enumerate(items)
+                           if str(e.get("id")) == str(since_id))
+                items = items[idx + 1:]
+            except StopIteration:
+                pass  # unknown id -> send recent window
+        return items[-limit:]
+
     def do_GET(self):
         from urllib.parse import urlparse, parse_qs
         u = urlparse(self.path)
@@ -369,6 +391,24 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/healthz":
             return self._json(200, {"ok": True,
                                     "auth": "on" if REQUIRE_AUTH else "off"})
+        if path in ("/api/feed", "/api/chat"):
+            # Polling fallback: GET /api/feed?channel=chat&since=<id>&limit=50
+            # chat = public (Studio needs it), mod/all = MOD_TOKEN gate.
+            channel = (q.get("channel", ["chat"])[0] or "chat").lower()
+            if channel not in ("chat", "mod", "all"):
+                channel = "chat"
+            if channel in ("mod", "all"):
+                gate = self._check_mod()
+                if gate is False:
+                    return  # 503 already sent
+                if gate is None:
+                    return self._json(401, {"ok": False,
+                                            "error": "bad mod token"})
+            return self._json(200, {
+                "ok": True, "channel": channel,
+                "messages": self._history_snapshot(
+                    channel, q.get("since", [""])[0], q.get("limit", ["50"])[0]),
+            })
         if path == "/api/stats":
             gate = self._check_mod()
             if gate is False:
@@ -426,6 +466,68 @@ class Handler(BaseHTTPRequestHandler):
                                   "source.</p>",
                                   "text/html; charset=utf-8")
             return self._file("overlay_mod.html", "text/html; charset=utf-8")
+        if path == "/media" or path.startswith("/media/"):
+            # Serve local test clips from moderator/media/ for
+            # ?video=/media/sample.mp4 . Range-aware (206) so browsers can
+            # seek/stream without downloading the whole file. Basename only
+            # (no traversal), video content-types only.
+            from urllib.parse import unquote
+            name = unquote(path[len("/media/"):] if path.startswith("/media/") else "")
+            if not name or "/" in name or "\\" in name or ".." in name:
+                return self._json(404, {"ok": False,
+                                        "error": "use /media/<file.mp4>"})
+            ctype = {"mp4": "video/mp4", "m4v": "video/mp4",
+                     "mov": "video/quicktime",
+                     "webm": "video/webm"}.get(name.rsplit(".", 1)[-1].lower(), "")
+            if not ctype:
+                return self._json(415, {"ok": False,
+                                        "error": "mp4/mov/webm only"})
+            fpath = os.path.join(HERE, "media", name)
+            if not os.path.isfile(fpath):
+                return self._json(404, {"ok": False, "error":
+                                        "no such file (put it in moderator/media/)"})
+            size = os.path.getsize(fpath)
+            start, end = 0, size - 1
+            status = 200
+            rng = self.headers.get("Range")
+            if rng and rng.startswith("bytes="):
+                try:
+                    spec = rng[len("bytes="):].split(",")[0].strip()
+                    if spec.startswith("-"):
+                        start = max(0, size - int(spec[1:]))
+                    elif spec.endswith("-"):
+                        start = int(spec[:-1])
+                    else:
+                        lo, hi = spec.split("-", 1)
+                        start, end = int(lo), int(hi)
+                    end = min(end, size - 1)
+                    if 0 <= start <= end:
+                        status = 206
+                    else:
+                        start, end, status = 0, size - 1, 200
+                except (ValueError, IndexError):
+                    start, end, status = 0, size - 1, 200
+            length = end - start + 1
+            self.send_response(status)
+            self.send_header("Content-Type", ctype)
+            self.send_header("Content-Length", str(length))
+            self.send_header("Accept-Ranges", "bytes")
+            if status == 206:
+                self.send_header("Content-Range",
+                                 f"bytes {start}-{end}/{size}")
+            self.send_header("Cache-Control", "public, max-age=3600")
+            self.end_headers()
+            if self.command != "HEAD" and length > 0:
+                with open(fpath, "rb") as f:
+                    f.seek(start)
+                    remaining = length
+                    while remaining > 0:
+                        chunk = f.read(min(65536, remaining))
+                        if not chunk:
+                            break
+                        self.wfile.write(chunk)
+                        remaining -= len(chunk)
+            return
         if path == "/":
             return self._send(200, (
                 "<h1>AI Moderator</h1><ul>"

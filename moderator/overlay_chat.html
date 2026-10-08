@@ -38,9 +38,112 @@
     font-size:24px;font-weight:800;animation:giftpop .5s cubic-bezier(.2,1.6,.4,1)}
   #viewers{position:fixed;top:14px;right:14px;background:rgba(0,0,0,.6);border-radius:99px;
     padding:4px 12px;font-size:14px;display:none}
-  #status{position:fixed;bottom:4px;right:8px;font-size:11px;color:rgba(255,255,255,.5)}
+  #status{position:fixed;bottom:4px;right:8px;font-size:11px;color:rgba(255,255,255,.5);
+    background:rgba(0,0,0,.45);border-radius:99px;padding:2px 10px}
   #status .dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:#34d399;margin-right:4px}
   #status.off .dot{background:#f87171}
+  #empty{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;
+    text-align:center;padding:24px;font-size:15px;line-height:1.5;color:rgba(255,255,255,.75);
+    pointer-events:none}
+  #empty .card{background:rgba(10,10,18,.72);border:1px solid rgba(255,255,255,.14);
+    border-radius:14px;padding:14px 18px;max-width:420px;backdrop-filter:blur(6px)}
+  #empty code{color:#22d3ee}
+  /* Browser-tab testing: ?bg=dark gives an opaque backdrop. OBS/Studio default
+     stays transparent — do NOT set a background unless asked. */
+  body.solid{background:#0b0f1a !important}
+  /* ---- video-test layers (opt-in): ?pattern=1 ?avatar=1 ?video=URL ---- */
+  #stage,#alert{z-index:2}
+  #empty{z-index:3}
+  #pattern{position:fixed;inset:0;display:none;pointer-events:none;z-index:0}
+  body.show-pattern #pattern{display:block}
+  #pattern canvas{width:100%;height:100%;display:block}
+  #videolayer{position:fixed;inset:0;display:none;z-index:0;pointer-events:none;background:#000}
+  body.show-video #videolayer{display:block}
+  #videolayer video{width:100%;height:100%;object-fit:cover;display:block}
+  #videonote{position:fixed;left:50%;bottom:34px;transform:translateX(-50%);display:none;
+    z-index:4;background:rgba(10,10,18,.85);border:1px solid rgba(251,191,36,.6);
+    border-radius:12px;padding:8px 14px;font-size:13px;color:#fde68a;max-width:90%;
+    text-align:center;pointer-events:none}
+  #avatar{position:fixed;display:none;z-index:1;width:320px;aspect-ratio:16/9;
+    border:2px solid rgba(34,211,238,.8);border-radius:12px;overflow:hidden;
+    background:linear-gradient(135deg,#0f172a,#1e1b4b 55%,#312e81);
+    box-shadow:0 4px 24px rgba(0,0,0,.5);pointer-events:none}
+  body.show-avatar #avatar{display:block}
+  #avatar.tl{top:14px;left:14px} #avatar.tr{top:14px;right:14px}
+  #avatar.bl{bottom:44px;left:14px} #avatar.br{bottom:44px;right:14px}
+  #avatar .face{position:absolute;inset:0;display:flex;align-items:center;justify-content:center}
+  #avatar .face span{width:84px;height:84px;border-radius:50%;
+    background:linear-gradient(135deg,#22d3ee,#a78bfa);display:flex;
+    align-items:center;justify-content:center;font-size:30px;font-weight:800;color:#0b0f1a}
+  #avatar .tag{position:absolute;left:8px;bottom:8px;background:rgba(0,0,0,.65);
+    border-radius:8px;padding:2px 10px;font-size:13px;font-weight:700}
+  #avatar .live{position:absolute;top:8px;left:8px;background:#ef4444;border-radius:6px;
+    padding:1px 8px;font-size:11px;font-weight:800;letter-spacing:.5px}
+  #avatar .rec{position:absolute;top:8px;right:8px;width:10px;height:10px;border-radius:50%;
+    background:#ef4444;animation:blink 1.2s infinite}
+  #avatar i{position:absolute;width:18px;height:18px;border:0 solid #22d3ee}
+  #avatar i.c1{top:4px;left:4px;border-top-width:3px;border-left-width:3px}
+  #avatar i.c2{top:4px;right:4px;border-top-width:3px;border-right-width:3px}
+  #avatar i.c3{bottom:4px;left:4px;border-bottom-width:3px;border-left-width:3px}
+  #avatar i.c4{bottom:4px;right:4px;border-bottom-width:3px;border-right-width:3px}
+  @keyframes blink{50%{opacity:.2}}
+  /* ---- vertical-live (portrait) tuning ----
+     TikTok LIVE is 9:16. Overlay auto-adapts when the browser source is
+     taller than wide; ?orient=v forces it, ?orient=h forces landscape.
+     Safe-area: right action rail (~72px incl. margin), bottom input bar
+     (~120px incl. comment field + gift button), top status row (~96px).
+     ?compact=1 shrinks further for small scenes; ?pad=N overrides (px). */
+  :root{
+    --pad: 14px;
+    --chat-font: 18px;
+    --chat-maxw: none;
+    --avatar-w: 320px;
+    --rail: 72px;
+    --top-safe: 96px;
+    --bottom-safe: 110px;
+  }
+  body.portrait{
+    --pad: 10px;
+    --chat-font: 16px;
+    --avatar-w: min(46vw, 240px);
+  }
+  body.compact{ --pad: 6px; --chat-font: 14px; --bottom-safe: 96px; }
+  body.portrait #stage{
+    /* keep chat clear of TikTok's bottom input bar + right action rail */
+    left:0; right:var(--rail); top:var(--top-safe); bottom:var(--bottom-safe);
+    padding:var(--pad); gap:6px;
+  }
+  body.portrait #alert{
+    top:var(--top-safe); left:var(--pad); right:calc(var(--rail) + var(--pad));
+  }
+  body.portrait #viewers{ top:56px; right:calc(var(--rail) + 4px); }
+  body.portrait .msg{ font-size:var(--chat-font); max-width:100%; }
+  body.portrait .msg.gift{ font-size:17px; }
+  body.portrait #alert .big-banner{ font-size:19px; padding:10px 12px; }
+  body.portrait #empty{ padding:12px; font-size:14px;
+    /* same safe-area as chat so the hint never hides behind TikTok UI */
+    left:0; right:var(--rail); top:var(--top-safe); bottom:var(--bottom-safe); }
+  body.portrait #avatar{ width:var(--avatar-w); }
+  body.portrait #avatar.tr{ right:calc(var(--rail) + 4px); }   /* dodge action rail */
+  body.portrait #avatar.br{ right:calc(var(--rail) + 4px); bottom:calc(var(--bottom-safe) + 10px); }
+  body.portrait #avatar.tl{ top:calc(var(--top-safe) + 8px); }    /* below top row */
+  @media (orientation:portrait){
+    body.auto-orient #stage{ left:0; right:72px; top:96px; bottom:110px;
+      padding:10px; gap:6px; }
+    body.auto-orient.compact #stage{ padding:6px; bottom:96px; }
+    body.auto-orient #alert{ top:96px; left:10px; right:82px; }
+    body.auto-orient #viewers{ top:56px; right:76px; }
+    body.auto-orient .msg{ font-size:16px; max-width:100%; }
+    body.auto-orient.compact .msg{ font-size:14px; }
+    body.auto-orient .msg.gift{ font-size:17px; }
+    body.auto-orient #alert .big-banner{ font-size:19px; padding:10px 12px; }
+    body.auto-orient #empty{ padding:12px; font-size:14px;
+      left:0; right:72px; top:96px; bottom:110px; }
+    body.auto-orient #avatar{ width:min(46vw, 240px); }
+    body.auto-orient #avatar.tr{ right:76px; }
+    body.auto-orient #avatar.br{ right:76px; bottom:120px; }
+    body.auto-orient #avatar.tl{ top:104px; }
+  }
   @keyframes slidein{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
   @keyframes giftpop{0%{opacity:0;transform:scale(.7)}100%{opacity:1;transform:scale(1)}}
 </style>
@@ -49,6 +152,11 @@
 <div id="viewers"></div>
 <div id="alert"></div>
 <div id="stage"></div>
+<div id="empty"><div class="card">Waiting for clean chat…<br>Open <code>?bg=dark</code> for a readable browser tab (OBS stays transparent).<br>Run <code>run.bat demo</code> to fire test messages.</div></div>
+<div id="pattern"><canvas id="pcanvas"></canvas></div>
+<div id="videolayer"><video id="vid" muted loop autoplay playsinline></video></div>
+<div id="videonote"></div>
+<div id="avatar" class="tl"><div class="face"><span>YOU</span></div><div class="live">LIVE</div><div class="rec"></div><div class="tag">you · camera test</div><i class="c1"></i><i class="c2"></i><i class="c3"></i><i class="c4"></i></div>
 <div id="status"><span class="dot"></span><span id="stext">connecting…</span></div>
 <script>
 (function(){
@@ -124,21 +232,191 @@
     addChat(e);
   }
 
-  var es = null, retry = 1000;
+  var es = null, retry = 1000, lastId = null, pollTimer = null;
+
+  if((q.get("bg") || "").toLowerCase() === "dark" ||
+     q.get("bg") === "1" || (q.get("bg") || "").toLowerCase() === "solid"){
+    document.body.classList.add("solid");
+  }
+  /* ---- orientation: auto (default) | ?orient=v = portrait | ?orient=h ---- */
+  (function(){
+    var o = (q.get("orient") || q.get("orientation") || "auto").toLowerCase();
+    // ?compact=1: smaller padding/fonts for tight vertical scenes.
+    if(q.get("compact") === "1" || (q.get("compact") || "").toLowerCase() === "on"){
+      document.body.classList.add("compact");
+    }
+    // ?pad=N: override stage padding in px (portrait safe-area keeps rail/bar).
+    var pad = parseInt(q.get("pad") || "", 10);
+    if(!isNaN(pad) && pad >= 0 && pad <= 60){
+      document.documentElement.style.setProperty("--pad", pad + "px");
+    }
+    if(o === "v" || o === "vertical" || o === "portrait"){
+      document.body.classList.add("portrait");
+    } else if(o === "h" || o === "horizontal" || o === "landscape"){
+      document.body.classList.remove("portrait", "auto-orient");
+    } else {
+      // auto: follow the actual browser-source shape, live on resize/rotate
+      document.body.classList.add("auto-orient");
+      function fit(){
+        var tall = false;
+        try{ tall = window.innerHeight > window.innerWidth; }catch(_){}
+        document.body.classList.toggle("portrait", tall);
+      }
+      fit();
+      try{ window.addEventListener("resize", fit); }catch(_){}
+      try{ window.addEventListener("orientationchange", fit); }catch(_){}
+    }
+  })();
+  /* ---- video-test layers: ?pattern=1  ?avatar=tl|tr|bl|br  ?video=URL ---- */
+  var testMode = false;
+
+  // C: avatar / camera-frame box. ?avatar=tl|tr|bl|br (+?label=Name).
+  (function(){
+    var av = (q.get("avatar") || "").toLowerCase();
+    if(!av || av === "0" || av === "off") return;
+    var box = document.getElementById("avatar");
+    var corner = (av === "tr" || av === "bl" || av === "br") ? av : "tl";
+    box.classList.remove("tl");
+    box.classList.add(corner);
+    var label = q.get("label") || q.get("name");
+    if(label){
+      var tag = box.querySelector(".tag");
+      // keep it text-only (no HTML injection from the URL)
+      if(tag){ tag.textContent = label.slice(0, 40) + " · camera test"; }
+    }
+    document.body.classList.add("show-avatar");
+    testMode = true;
+  })();
+
+  // B: real video file layer (?video=URL or /media/file.mp4).
+  (function(){
+    var vsrc = q.get("video") || q.get("v");
+    if(!vsrc || vsrc === "0" || vsrc === "off") return;
+    if(vsrc === "1" || vsrc === "sample") vsrc = "/media/sample.mp4";
+    document.body.classList.add("show-video");
+    testMode = true;
+    var vid = document.getElementById("vid"), note = document.getElementById("videonote");
+    function showNote(msg){ note.textContent = msg; note.style.display = "block"; }
+    vid.addEventListener("canplay", function(){ note.style.display = "none"; });
+    vid.addEventListener("error", function(){
+      showNote("Video failed to load (" + vsrc + "). Local file? Drop it in moderator/media/ and restart.");
+    });
+    try{
+      showNote("loading video…");
+      vid.src = vsrc;
+      var p = vid.play();
+      if(p && p.catch) p.catch(function(){});
+      setTimeout(function(){  // some CSP blocks fire no 'error' event — detect stall
+        if(vid.readyState < 2) showNote("Video still not playing — check the URL, or restart so the server picks up the new CSP + /media route.");
+      }, 6000);
+    }catch(e){ showNote("Video error: " + e); }
+  })();
+
+  // A: animated canvas test pattern (inline JS, live immediately).
+  function startPattern(){
+    var cv = document.getElementById("pcanvas");
+    function fit(){ try{ cv.width = window.innerWidth; cv.height = window.innerHeight; }catch(_){} }
+    fit();
+    window.addEventListener("resize", fit);
+    var ctx = cv.getContext("2d"), t0 = Date.now(), frame = 0;
+    var bars = ["#f43f5e","#f97316","#eab308","#22c55e","#06b6d4c","#0ea5e9","#8b5cf6"];
+    function draw(){
+      frame++;
+      var W = cv.width, H = cv.height, t = (Date.now() - t0) / 1000;
+      var n = bars.length, bw = Math.ceil(W / n), i;
+      for(i = 0; i < n; i++){ ctx.fillStyle = bars[i]; ctx.fillRect(i * bw, 0, bw, H); }
+      var x = ((t * 220) % (W + 300)) - 150;
+      var g = ctx.createLinearGradient(x - 80, 0, x + 80, 0);
+      g.addColorStop(0, "rgba(255,255,255,0)");
+      g.addColorStop(0.5, "rgba(255,255,255,.35)");
+      g.addColorStop(1, "rgba(255,255,255,0)");
+      ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+      var bx = W / 2 + Math.cos(t * 1.3) * W * 0.32;
+      var by = H / 2 - Math.abs(Math.sin(t * 2.1)) * H * 0.3;
+      ctx.beginPath(); ctx.arc(bx, by, 34, 0, 6.2832);
+      ctx.fillStyle = "#0b0f1a"; ctx.fill();
+      ctx.lineWidth = 5; ctx.strokeStyle = "#fff"; ctx.stroke();
+      ctx.fillStyle = "rgba(0,0,0,.65)";
+      ctx.fillRect(W / 2 - 150, 18, 300, 54);
+      ctx.fillStyle = "#fff"; ctx.font = "bold 26px monospace"; ctx.textAlign = "center";
+      var mm = String(Math.floor(t / 60)).padStart(2, "0");
+      var ss = (t % 60).toFixed(1).padStart(4, "0");
+      ctx.fillText("TEST " + mm + ":" + ss + "  f" + frame, W / 2, 54);
+      requestAnimationFrame(draw);
+    }
+    draw();
+  }
+  (function(){
+    var pat = (q.get("pattern") || "").toLowerCase();
+    if(pat === "1" || pat === "bars" || pat === "on"){
+      document.body.classList.add("show-pattern");
+      testMode = true;
+      try{ startPattern(); }catch(_){}
+    }
+  })();
+
+  var emptyBox = document.getElementById("empty");
+  function hideEmpty(){
+    if(emptyBox && stage.children.length > 0){ emptyBox.style.display = "none"; }
+  }
+  if(testMode && emptyBox){
+    var ecard = emptyBox.querySelector(".card");
+    if(ecard){ ecard.innerHTML = "Test mode — layers on.<br>Chat lands here when live; drop test params for the clean feed."; }
+  }
+
+  function pollOnce(){
+    // Tunnel-proof history load: plain GET works through Cloudflare / ngrok
+    // buffering, Studio embedded browser, everything.
+    var url = "/api/feed?channel=chat&limit=" + MAX +
+      (lastId ? "&since=" + encodeURIComponent(lastId) : "");
+    return fetch(url).then(function(r){
+      if(!r.ok) throw new Error("http " + r.status);
+      return r.json();
+    }).then(function(d){
+      status.classList.remove("off"); stext.textContent = "live · clean chat";
+      (d.messages || []).forEach(handle);
+      if(d.messages && d.messages.length) lastId = d.messages[d.messages.length-1].id;
+      hideEmpty();
+    }).catch(function(){
+      status.classList.add("off"); stext.textContent = "reconnecting…";
+    });
+  }
+
+  function pollLoop(){
+    pollOnce().finally(function(){
+      pollTimer = setTimeout(pollLoop, 1500);
+    });
+  }
+
   function connect(){
+    // Run SSE (instant on localhost) AND polling (tunnel-proof) in parallel.
+    // Dedupe via `seen` keeps both paths from double-rendering. Old code
+    // waited 5 s on SSE then picked one path — behind Cloudflare the SSE
+    // `open` event fires on headers while the body stays buffered, so the
+    // page sat blank forever. Parallel paths can't deadlock like that.
     try{ if(es) es.close(); }catch(_){}
     status.classList.add("off"); stext.textContent = "connecting…";
-    es = new EventSource("/events?channel=chat");
-    es.onopen = function(){ status.classList.remove("off");
-      stext.textContent = "live · clean chat"; retry = 1000; };
-    es.onmessage = function(ev){ try{ handle(JSON.parse(ev.data)); }catch(_){} };
-    es.onerror = function(){ status.classList.add("off");
-      stext.textContent = "reconnecting…";
-      try{ es.close(); }catch(_){}
-      setTimeout(connect, (retry = Math.min(30000, retry * 2)));
-    };
+    try{
+      es = new EventSource("/events?channel=chat");
+    }catch(_){ es = null; }
+    if(es){
+      es.onopen = function(){ status.classList.remove("off");
+        stext.textContent = "live · clean chat"; retry = 1000; };
+      es.onmessage = function(ev){
+        try{ var e = JSON.parse(ev.data); handle(e); if(e.id) lastId = e.id; hideEmpty(); }catch(_){} };
+      es.onerror = function(){
+        status.classList.add("off");
+        stext.textContent = "reconnecting…";
+        try{ es.close(); }catch(_){}
+        setTimeout(connect, (retry = Math.min(30000, retry * 2)));
+      };
+    }
   }
-  connect();
+  pollOnce().finally(function(){
+    connect();
+    if(pollTimer){ clearTimeout(pollTimer); }
+    pollTimer = setTimeout(pollLoop, 1500);
+  });
 })();
 </script>
 </body>

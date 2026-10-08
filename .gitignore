@@ -25,4 +25,11 @@ Thumbs.db
 logs/
 # Preview / debug logs
 server-preview*.log
+server-restart.log
+cloudflared*.log
 debug.log
+# Local test clips (large binaries, machine-specific)
+/moderator/media/*.mp4
+/moderator/media/*.m4v
+/moderator/media/*.mov
+/moderator/media/*.webm
