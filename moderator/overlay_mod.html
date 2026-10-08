@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mod Console — AI Moderator</title>
+<style>
+  :root{--font:"Segoe UI",system-ui,-apple-system,Roboto,sans-serif;
+    --bg:#0b0f1a;--panel:#131a2b;--line:#243049;--txt:#e8eefc;--dim:#8fa0bd;
+    --green:#34d399;--yellow:#fbbf24;--red:#f87171}
+  *{box-sizing:border-box}html,body{margin:0;height:100%}
+  body{background:var(--bg);color:var(--txt);font-family:var(--font);font-size:14px}
+  header{display:flex;align-items:center;gap:12px;padding:12px 16px;
+    background:#0e1424;border-bottom:1px solid var(--line);position:sticky;top:0;z-index:5}
+  header h1{font-size:16px;margin:0}
+  header .pill{background:#1c2740;border:1px solid var(--line);border-radius:99px;
+    padding:2px 10px;font-size:12px;color:var(--dim)}
+  header .pill b{color:var(--txt)}
+  #stats{display:flex;gap:8px;margin-left:auto;flex-wrap:wrap}
+  .stat{background:var(--panel);border:1px solid var(--line);border-radius:10px;
+    padding:4px 10px;font-size:12px;color:var(--dim)}
+  .stat b{color:var(--txt);font-size:14px;margin-right:4px}
+  main{display:grid;grid-template-columns:1fr 340px;gap:12px;padding:12px;max-width:1400px;margin:0 auto}
+  @media(max-width:900px){main{grid-template-columns:1fr}}
+  #feed{display:flex;flex-direction:column;gap:8px;min-width:0}
+  .row{background:var(--panel);border:1px solid var(--line);border-left:5px solid var(--green);
+    border-radius:10px;padding:8px 12px;animation:slidein .25s ease-out}
+  .row.yellow{border-left-color:var(--yellow)}
+  .row.red{border-left-color:var(--red);background:#1d1420}
+  .row .top{display:flex;gap:8px;align-items:baseline;flex-wrap:wrap}
+  .row .user{font-weight:700}
+  .row .sev{font-size:11px;font-weight:700;border-radius:6px;padding:1px 7px}
+  .sev.green{background:rgba(52,211,153,.15);color:var(--green)}
+  .sev.yellow{background:rgba(251,191,36,.15);color:var(--yellow)}
+  .sev.red{background:rgba(248,113,113,.15);color:var(--red)}
+  .row .time{margin-left:auto;color:var(--dim);font-size:11px}
+  .row .text{margin:4px 0;word-wrap:break-word}
+  .row .meta{font-size:11px;color:var(--dim)}
+  aside{display:flex;flex-direction:column;gap:12px;min-width:0}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px}
+  .card h2{font-size:13px;margin:0 0 8px;text-transform:uppercase;letter-spacing:.06em;color:var(--dim)}
+  #queue:empty::after{content:"Queue clear — nothing blocked or flagged yet.";color:var(--dim);font-size:13px}
+  .qitem{border:1px solid var(--line);border-left:4px solid var(--red);border-radius:8px;
+    padding:6px 8px;margin-bottom:6px;font-size:13px}
+  .qitem.yellow{border-left-color:var(--yellow)}
+  .qitem .why{font-size:11px;color:var(--dim)}
+  #toolbar{display:flex;gap:8px;align-items:center;margin-bottom:4px;flex-wrap:wrap}
+  #toolbar input[type=search]{flex:1;min-width:140px;background:#0e1424;color:var(--txt);
+    border:1px solid var(--line);border-radius:8px;padding:6px 10px}
+  #toolbar label{font-size:12px;color:var(--dim);display:flex;gap:4px;align-items:center}
+  @keyframes slidein{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+  #conn{font-size:11px;color:var(--dim)}
+  #conn .dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--green);margin-right:4px}
+  #conn.off .dot{background:var(--red)}
+</style>
+</head>
+<body>
+<header>
+  <h1>🛡 Mod Console</h1>
+  <span class="pill" id="conn"><span class="dot"></span><span id="ctext">connecting…</span></span>
+  <div id="stats">
+    <span class="stat"><b id="s-rec">0</b>received</span>
+    <span class="stat"><b id="s-ok">0</b>allowed</span>
+    <span class="stat"><b id="s-flag">0</b>flagged</span>
+    <span class="stat"><b id="s-block">0</b>blocked</span>
+    <span class="stat"><b id="s-fwd">0</b>forwarded</span>
+  </div>
+</header>
+<main>
+  <section>
+    <div id="toolbar">
+      <input type="search" id="filter" placeholder="Filter by user or text…">
+      <label><input type="checkbox" id="f-green" checked> green</label>
+      <label><input type="checkbox" id="f-yellow" checked> yellow</label>
+      <label><input type="checkbox" id="f-red" checked> red</label>
+    </div>
+    <div id="feed"></div>
+  </section>
+  <aside>
+    <div class="card"><h2>⚠ Review queue (blocked + flagged)</h2><div id="queue"></div></div>
+    <div class="card"><h2>How to use</h2>
+      <div style="font-size:12px;color:var(--dim);line-height:1.6">
+      Green = clean (on overlay). Yellow = visible but flagged.
+      Red = blocked — never reached the overlay or TTLive.<br>
+      Copy a username into TikTok's own mod panel to act (human-in-the-loop for v1).
+      Keep this console on a second monitor — never add it as a stream source.</div>
+    </div>
+  </aside>
+</main>
+<script>
+(function(){
+  "use strict";
+  var feed = document.getElementById("feed"), queue = document.getElementById("queue"),
+      filter = document.getElementById("filter"), seen = new Set();
+  function esc(s){return String(s).replace(/[&<>"']/g,function(c){
+    return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c];});}
+  var FG = document.getElementById("f-green"),
+      FY = document.getElementById("f-yellow"),
+      FR = document.getElementById("f-red");
+  function pass(e){
+    var sev = (e.verdict || {}).severity || "green";
+    if(sev === "green" && !FG.checked) return false;
+    if(sev === "yellow" && !FY.checked) return false;
+    if(sev === "red" && !FR.checked) return false;
+    var f = filter.value.trim().toLowerCase();
+    if(f && (e.username + " " + e.text).toLowerCase().indexOf(f) < 0) return false;
+    return true;
+  }
+  function render(e){
+    var v = e.verdict || {}, sev = v.severity || "green";
+    var div = document.createElement("div");
+    div.className = "row " + sev; div.dataset.sev = sev;
+    div.dataset.search = (e.username + " " + e.text).toLowerCase();
+    var when = new Date(e.timestamp || Date.now()).toLocaleTimeString("en-US", {hour12:false});
+    div.innerHTML = '<div class="top"><span class="sev ' + sev + '">' + sev.toUpperCase() +
+      '</span><span class="user">' + esc(e.username || "?") + "</span>" +
+      '<span class="meta">' + esc(v.verdict || "ok") + " · " +
+      (typeof v.score === "number" ? v.score.toFixed(2) : "0.00") + " · " +
+      esc(v.source || "") + " · " + esc((e.meta || {}).eventType || "comment") +
+      (e.verdict_ms != null ? " · " + e.verdict_ms + "ms" : "") + "</span>" +
+      '<span class="time">' + when + "</span></div>" +
+      '<div class="text">' + esc(e.text || "") + "</div>";
+    if(sev === "red"){
+      var b = document.createElement("button");
+      b.textContent = "copy @"; b.style.cssText = "margin-left:8px;font-size:11px;cursor:pointer";
+      b.onclick = function(){ try{ navigator.clipboard.writeText(e.username || "");
+        b.textContent = "copied!"; }catch(_){} };
+      div.querySelector(".top").appendChild(b);
+    }
+    feed.prepend(div);
+    while(feed.children.length > 200) feed.removeChild(feed.lastChild);
+    if(sev !== "green"){
+      var qi = document.createElement("div");
+      qi.className = "qitem" + (sev === "yellow" ? " yellow" : "");
+      qi.innerHTML = "<b>" + esc(e.username || "?") + "</b>: " +
+        esc((e.text || "").slice(0,120)) +
+        '<div class="why">' + esc(v.verdict || "") + " · " +
+        (typeof v.score === "number" ? v.score.toFixed(2) : "") + " · " + when + "</div>";
+      queue.prepend(qi);
+      while(queue.children.length > 50) queue.removeChild(queue.lastChild);
+    }
+  }
+  function refreshStats(){
+    fetch("/api/stats").then(function(r){return r.json();}).then(function(s){
+      document.getElementById("s-rec").textContent = s.received || 0;
+      document.getElementById("s-ok").textContent = s.allowed || 0;
+      document.getElementById("s-flag").textContent = s.flagged || 0;
+      document.getElementById("s-block").textContent = s.blocked || 0;
+      document.getElementById("s-fwd").textContent = s.forwarded || 0;
+    }).catch(function(){});
+  }
+  function refilter(){
+    var f = filter.value.trim().toLowerCase();
+    Array.prototype.forEach.call(feed.children, function(row){
+      var sev = row.dataset.sev || "green";
+      var ok = (sev === "green" && FG.checked) || (sev === "yellow" && FY.checked) || (sev === "red" && FR.checked);
+      row.style.display = (ok && (!f || row.dataset.search.indexOf(f) >= 0)) ? "" : "none";
+    });
+  }
+  filter.addEventListener("input", refilter);
+  FG.addEventListener("change", refilter);
+  FY.addEventListener("change", refilter);
+  FR.addEventListener("change", refilter);
+  var es = null, retry = 1000, conn = document.getElementById("conn"),
+      ctext = document.getElementById("ctext");
+  function connect(){
+    try{ if(es) es.close(); }catch(_){}
+    conn.classList.add("off"); ctext.textContent = "connecting…";
+    es = new EventSource("/events?channel=all");
+    es.onopen = function(){ conn.classList.remove("off");
+      ctext.textContent = "live"; retry = 1000; };
+    es.onmessage = function(ev){
+      try{ var e = JSON.parse(ev.data);
+        if(!e || !e.id || seen.has(e.id)) return;
+        seen.add(e.id); if(pass(e)) render(e); refreshStats();
+      }catch(_){}
+    };
+    es.onerror = function(){ conn.classList.add("off");
+      ctext.textContent = "reconnecting…";
+      try{ es.close(); }catch(_){}
+      setTimeout(connect, (retry = Math.min(30000, retry * 2)));
+    };
+  }
+  fetch("/api/flags?limit=20").then(function(r){return r.json();}).then(function(d){
+    (d.flags || []).reverse().forEach(function(f){
+      render({id: "seed-" + f.ts + "-" + (f.tt_id || Math.random()),
+        username: f.username, text: f.text, timestamp: f.ts,
+        meta: {eventType: f.event_type || "comment"},
+        verdict: {verdict: f.verdict, score: f.score, source: f.source, severity: "red"}});
+    });
+  }).catch(function(){});
+  connect(); refreshStats(); setInterval(refreshStats, 5000);
+})();
+</script>
+
+</body>
+</html>

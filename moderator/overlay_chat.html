@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Clean Chat — AI Moderator</title>
+<style>
+  :root{
+    --font: "Segoe UI", system-ui, -apple-system, Roboto, sans-serif;
+    --radius: 14px;
+    --chat-bg: rgba(10,10,18,.72); --gift-bg: rgba(46,32,4,.82);
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%;margin:0}
+  body{background:transparent !important;font-family:var(--font);color:#fff;overflow:hidden}
+  #stage{position:fixed;inset:0;display:flex;flex-direction:column;justify-content:flex-end;
+    padding:14px;gap:8px;pointer-events:none}
+  #alert{position:fixed;top:14px;left:14px;right:14px;display:flex;flex-direction:column;
+    gap:8px;pointer-events:none}
+  .msg{background:var(--chat-bg);border:1px solid rgba(255,255,255,.14);border-radius:var(--radius);
+    padding:8px 12px;font-size:18px;line-height:1.35;backdrop-filter:blur(6px);
+    animation:slidein .28s ease-out;word-wrap:break-word;box-shadow:0 4px 18px rgba(0,0,0,.35)}
+  .msg .u{font-weight:700;margin-right:6px;background:linear-gradient(90deg,#22d3ee,#a78bfa);
+    -webkit-background-clip:text;background-clip:text;color:transparent}
+  .msg .v{font-size:11px;border:1px solid #fbbf24;color:#fbbf24;border-radius:99px;
+    padding:0 7px;margin-left:6px;vertical-align:2px;white-space:nowrap}
+  .msg.sys{background:rgba(20,30,50,.78);border-color:rgba(34,211,238,.45);font-size:16px}
+  .msg.gift{background:var(--gift-bg);border:1px solid rgba(251,191,36,.6);font-size:19px;
+    animation:giftpop .45s cubic-bezier(.2,1.6,.4,1)}
+  .msg.gift.big{font-size:23px;border-width:2px;box-shadow:0 0 24px rgba(251,191,36,.45)}
+  .msg.mod{border-color:rgba(52,211,153,.6)}
+  .msg.mod .u{background:none;color:#34d399;-webkit-text-fill-color:#34d399}
+  .msg .tag{font-size:11px;font-weight:700;border-radius:6px;padding:1px 6px;margin-right:6px;
+    vertical-align:2px;background:#334155;color:#e2e8f0}
+  .msg.gift .tag{background:#f59e0b;color:#111}
+  #alert .big-banner{background:linear-gradient(90deg,rgba(88,28,135,.92),rgba(30,58,138,.92));
+    border:1px solid rgba(167,139,250,.7);border-radius:16px;padding:12px 16px;text-align:center;
+    font-size:24px;font-weight:800;animation:giftpop .5s cubic-bezier(.2,1.6,.4,1)}
+  #viewers{position:fixed;top:14px;right:14px;background:rgba(0,0,0,.6);border-radius:99px;
+    padding:4px 12px;font-size:14px;display:none}
+  #status{position:fixed;bottom:4px;right:8px;font-size:11px;color:rgba(255,255,255,.5)}
+  #status .dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:#34d399;margin-right:4px}
+  #status.off .dot{background:#f87171}
+  @keyframes slidein{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
+  @keyframes giftpop{0%{opacity:0;transform:scale(.7)}100%{opacity:1;transform:scale(1)}}
+</style>
+</head>
+<body>
+<div id="viewers"></div>
+<div id="alert"></div>
+<div id="stage"></div>
+<div id="status"><span class="dot"></span><span id="stext">connecting…</span></div>
+<script>
+(function(){
+  "use strict";
+  var q = new URLSearchParams(location.search);
+  var MAX = Math.min(200, Math.max(5, parseInt(q.get("max") || "50", 10) || 50));
+  var HIDE = parseInt(q.get("alerts") || "6000", 10) || 0;
+  var stage = document.getElementById("stage"),
+      alertBox = document.getElementById("alert"),
+      viewers = document.getElementById("viewers"),
+      status = document.getElementById("status"),
+      stext = document.getElementById("stext"),
+      seen = new Set();
+
+  function esc(s){return String(s).replace(/[&<>"']/g,function(c){
+    return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c];});}
+  function trim(){ while(stage.children.length > MAX) stage.removeChild(stage.firstChild); }
+
+  var GIFT_RE = /\[GIFT\]\s*@?(\S+)\s+sent\s+(.+?)(?:\s+x(\d+))?(?:\s+\((\d+).*?\))?\s*$/i;
+  var TAG_RE = /^\[(GIFT|FOLLOW|SHARE|SUBSCRIBE|QUESTION|JOIN|LIKES|EMOTE|BATTLE[^\]]*)\]\s*/i;
+
+  function giftInfo(e){
+    var m = GIFT_RE.exec(e.text || ""), meta = e.meta || {};
+    if(!m) return null;
+    return {from: e.username || m[1], gift: meta.giftName || m[2],
+      count: meta.giftRepeatCount || parseInt(m[3] || "1", 10),
+      diamonds: meta.giftValue || parseInt(m[4] || "0", 10)};
+  }
+
+  function addChat(e){
+    var meta = e.meta || {}, div = document.createElement("div"), tag = "";
+    div.className = "msg";
+    var et = meta.eventType || "comment";
+    if(et === "gift"){ div.className += " gift"; }
+    else if(et !== "comment"){ div.className += " sys"; tag = et.toUpperCase(); }
+    if(meta.isModerator){ div.classList.add("mod"); }
+    var flag = (e.verdict && e.verdict.severity === "yellow")
+      ? '<span class="v">⚠ ' + esc(e.verdict.verdict || "flagged") + "</span>" : "";
+    div.innerHTML = (tag ? '<span class="tag">' + esc(tag) + "</span>" : "") +
+      '<span class="u">' + esc(e.username || "?") + "</span><span>" +
+      esc((e.text || "").replace(TAG_RE, "")) + "</span>" + flag;
+    stage.appendChild(div); trim();
+  }
+
+  function addGift(e, g){
+    var big = g.diamonds >= 500 || g.count >= 10;
+    var div = document.createElement("div");
+    if(big){ div.className = "big-banner"; div.textContent =
+      "🎁 " + g.from + " sent " + g.gift + (g.count > 1 ? " ×" + g.count : "") +
+      (g.diamonds ? " (" + g.diamonds + "💎)" : ""); }
+    else { div.className = "msg gift" + (g.diamonds >= 100 ? " big" : "");
+      div.innerHTML = "🎁 <b>" + esc(g.from) + "</b> → <b>" + esc(g.gift) + "</b>" +
+        (g.count > 1 ? " ×" + g.count : "") +
+        (g.diamonds ? " <i>(" + g.diamonds + "💎)</i>" : ""); }
+    alertBox.appendChild(div);
+    if(HIDE > 0) setTimeout(function(){
+      div.style.transition = "opacity .6s"; div.style.opacity = "0";
+      setTimeout(function(){ div.remove(); }, 650);
+    }, HIDE + (big ? 4000 : 0));
+  }
+
+  function handle(e){
+    if(!e || !e.id || seen.has(e.id)) return;
+    seen.add(e.id);
+    if(seen.size > 2000){ var it = seen.values(); seen.delete(it.next().value); }
+    var et = (e.meta || {}).eventType || "comment";
+    if(typeof e.meta.viewerCount === "number" && e.meta.viewerCount > 0){
+      viewers.style.display = "block";
+      viewers.textContent = "👁 " + e.meta.viewerCount;
+    }
+    var g = (et === "gift") ? giftInfo(e) : null;
+    if(g){ addGift(e, g); }
+    addChat(e);
+  }
+
+  var es = null, retry = 1000;
+  function connect(){
+    try{ if(es) es.close(); }catch(_){}
+    status.classList.add("off"); stext.textContent = "connecting…";
+    es = new EventSource("/events?channel=chat");
+    es.onopen = function(){ status.classList.remove("off");
+      stext.textContent = "live · clean chat"; retry = 1000; };
+    es.onmessage = function(ev){ try{ handle(JSON.parse(ev.data)); }catch(_){} };
+    es.onerror = function(){ status.classList.add("off");
+      stext.textContent = "reconnecting…";
+      try{ es.close(); }catch(_){}
+      setTimeout(connect, (retry = Math.min(30000, retry * 2)));
+    };
+  }
+  connect();
+})();
+</script>
+</body>
+</html>

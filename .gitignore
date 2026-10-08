@@ -12,6 +12,7 @@ npm-debug.log*
 # Environment / secrets
 .env
 .env.*
+!.env.example
 
 # OS / editor
 .DS_Store
@@ -22,3 +23,6 @@ Thumbs.db
 *.db
 *.sqlite3
 logs/
+# Preview / debug logs
+server-preview*.log
+debug.log
