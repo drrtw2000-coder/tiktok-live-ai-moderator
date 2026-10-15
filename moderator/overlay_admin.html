@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Overlay Control — AI Moderator</title>
+<style>
+  :root{--font:"Segoe UI",system-ui,-apple-system,Roboto,sans-serif;
+    --bg:#0b0f1a;--panel:#131a2b;--line:#243049;--txt:#e8eefc;--dim:#8fa0bd;
+    --green:#34d399;--yellow:#fbbf24;--red:#f87171;--gold:#f59e0b}
+  *{box-sizing:border-box}html,body{margin:0}
+  body{background:var(--bg);color:var(--txt);font-family:var(--font);font-size:14px;padding:16px}
+  h1{font-size:18px;margin:0 0 4px}
+  .sub{color:var(--dim);font-size:12px;margin-bottom:16px}
+  main{max-width:1060px;margin:0 auto;display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  @media(max-width:900px){main{grid-template-columns:1fr}}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px}
+  .card h2{font-size:13px;margin:0 0 10px;text-transform:uppercase;letter-spacing:.06em;color:var(--dim)}
+  .row{display:flex;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid rgba(36,48,73,.5)}
+  .row:last-child{border-bottom:0}
+  .row label{flex:1}
+  .row small{display:block;color:var(--dim);font-size:11px}
+  input[type=number]{width:90px;background:#0e1424;color:var(--txt);border:1px solid var(--line);border-radius:8px;padding:6px 8px}
+  input[type=text]{width:100%;background:#0e1424;color:var(--txt);border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-size:12px}
+  input[type=checkbox]{width:18px;height:18px;accent-color:var(--gold)}
+  .btn{background:var(--gold);color:#111;border:0;border-radius:8px;padding:8px 14px;font-weight:700;cursor:pointer;margin-right:8px;margin-top:4px}
+  .btn.ghost{background:#1c2740;color:var(--txt);border:1px solid var(--line)}
+  #link{word-break:break-all;background:#0e1424;border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-size:12px;color:#22d3ee;margin:8px 0}
+  #preview{width:100%;height:340px;border:1px solid var(--line);border-radius:8px;background:transparent}
+  #toast{position:fixed;bottom:16px;left:50%;transform:translateX(-50%);background:#065f46;color:#fff;
+    border-radius:99px;padding:8px 18px;font-size:13px;display:none}
+  #statsline{font-size:12px;color:var(--dim);line-height:1.8}
+  #statsline b{color:var(--txt)}
+</style>
+</head>
+<body>
+<h1>🎛 Overlay Control</h1>
+<div class="sub">Pushes apply live to every connected overlay. URL params on a Studio source always win over these.</div>
+<main>
+  <section class="card"><h2>Display</h2>
+    <div class="row"><label>Chat comments<small>Overlay is gifts-only unless this is on</small></label><input type="checkbox" id="f_comments"></div>
+    <div class="row"><label>Likes leaderboard card<small>Top-10 tap ranking</small></label><input type="checkbox" id="f_likes" checked></div>
+    <div class="row"><label>Animations<small>Spring entrances, pulses</small></label><input type="checkbox" id="f_anim" checked></div>
+    <div class="row"><label>Confetti<small>Gift celebration particles</small></label><input type="checkbox" id="f_confetti" checked></div>
+    <div class="row"><label>Max messages<small>5 – 200</small></label><input type="number" id="n_max" min="5" max="200" value="50"></div>
+    <div class="row"><label>Gift card time (ms)<small>0 = stays until replaced</small></label><input type="number" id="n_alerts" min="0" max="60000" step="500" value="6000"></div>
+    <div class="row"><label>Leaderboard every (s)<small>3 – 120</small></label><input type="number" id="n_every" min="3" max="120" value="10"></div>
+    <div class="row"><label>Leaderboard shows (s)<small>1 – cycle length</small></label><input type="number" id="n_show" min="1" max="120" value="3"></div>
+    <button class="btn" id="b_save">💾 Save + push live</button><button class="btn ghost" id="b_load">↻ Reload</button>
+    <button class="btn ghost" id="b_rol">⟳ Reload overlays</button>
+  </section>
+  <section class="card"><h2>Studio source link</h2>
+    <div class="row"><label>MOD token<small>Same token as ever; saved on this device</small></label></div>
+    <input type="text" id="token" placeholder="paste MOD_TOKEN" autocomplete="off">
+    <div style="margin-top:8px"><button class="btn ghost" id="b_token">Use token</button></div>
+    <div id="link"></div>
+    <button class="btn ghost" id="b_copy">⧉ Copy link</button>
+    <button class="btn ghost" id="b_preview">👁 Preview</button>
+    <div style="margin-top:8px"><iframe id="preview" title="overlay preview"></iframe></div>
+  </section>
+  <section class="card"><h2>Live status</h2><div id="statsline">…</div></section><section class="card"><h2>⚔ Recent battles</h2><div id="battlehist" style="font-size:12px;color:var(--dim)">…</div></section>
+</main>
+<div id="toast"></div>
+<script>
+(function(){
+  "use strict";
+  var $ = function(id){ return document.getElementById(id); };
+  var tok = "";
+  try{
+    tok = new URLSearchParams(location.search).get("token") ||
+      localStorage.getItem("tt_admin_token") || "";
+  }catch(_){}
+  $("token").value = tok;
+  function toast(msg){
+    var t = $("toast"); t.textContent = msg; t.style.display = "block";
+    setTimeout(function(){ t.style.display = "none"; }, 2500);
+  }
+  function api(path, body){
+    var url = path + "?token=" + encodeURIComponent(tok);
+    var o = {headers: {"Content-Type": "application/json"}};
+    if(body !== undefined){ o.method = "POST"; o.body = JSON.stringify(body); }
+    return fetch(url, o).then(function(r){
+      if(r.status === 401) throw new Error("bad token (401)");
+      if(!r.ok) throw new Error("http " + r.status);
+      return r.json();
+    });
+  }
+  function fill(c){
+    $("f_comments").checked = !!c.comments;
+    $("f_likes").checked = c.likes !== false;
+    $("f_anim").checked = c.anim !== false;
+    $("f_confetti").checked = c.confetti !== false;
+    $("n_max").value = c.max; $("n_alerts").value = c.alerts;
+    $("n_every").value = c.likes_every; $("n_show").value = c.likes_show;
+    buildLink();
+  }
+  function gather(){
+    return {
+      comments: $("f_comments").checked,
+      likes: $("f_likes").checked,
+      anim: $("f_anim").checked,
+      confetti: $("f_confetti").checked,
+      max: parseInt($("n_max").value, 10) || 50,
+      alerts: parseInt($("n_alerts").value, 10) || 0,
+      likes_every: parseInt($("n_every").value, 10) || 10,
+      likes_show: parseInt($("n_show").value, 10) || 3
+    };
+  }
+  function buildLink(){
+    var p = [];
+    if($("f_comments").checked) p.push("comments=1");
+    if(!$("f_likes").checked) p.push("likescard=0");
+    if(!$("f_anim").checked) p.push("anim=off");
+    if(!$("f_confetti").checked) p.push("confetti=off");
+    p.push("max=" + encodeURIComponent($("n_max").value || "50"));
+    p.push("alerts=" + encodeURIComponent($("n_alerts").value || "6000"));
+    p.push("likes_every=" + encodeURIComponent($("n_every").value || "10"));
+    p.push("likes_show=" + encodeURIComponent($("n_show").value || "3"));
+    var url = location.origin + "/overlay/chat" + (p.length ? "?" + p.join("&") : "");
+    $("link").textContent = url;
+    return url;
+  }
+  ["f_comments","f_likes","f_anim","f_confetti","n_max","n_alerts","n_every","n_show"]
+    .forEach(function(id){ $(id).addEventListener("change", buildLink); });
+  $("b_save").onclick = function(){
+    api("/api/overlay-config", gather()).then(function(d){
+      fill(d.config || gather()); toast("Pushed live ✅"); refreshStats();
+    }).catch(function(e){ toast("Save failed: " + e.message); });
+  };
+  $("b_load").onclick = function(){
+    api("/api/overlay-config").then(function(d){ fill(d.config); toast("Reloaded"); })
+      .catch(function(e){ toast("Load failed: " + e.message); });
+  };
+  $("b_rol").onclick = function(){
+    api("/api/overlay-cmd", {cmd: "reload"}).then(function(){ toast("Overlays reloading ↻"); })
+      .catch(function(e){ toast("Reload failed: " + e.message); });
+  };
+  $("b_token").onclick = function(){
+    tok = $("token").value.trim();
+    try{ localStorage.setItem("tt_admin_token", tok); }catch(_){}
+    toast("Token saved — reloading");
+    api("/api/overlay-config").then(function(d){ fill(d.config); refreshStats(); })
+      .catch(function(e){ toast("Token rejected: " + e.message); });
+  };
+  $("b_copy").onclick = function(){
+    var l = buildLink();
+    if(navigator.clipboard) navigator.clipboard.writeText(l).then(function(){ toast("Link copied ✅"); });
+  };
+  $("b_preview").onclick = function(){ $("preview").src = buildLink(); };
+  function esc(s){ return String(s == null ? "" : s).replace(/[&<>"']/g, function(c){
+    return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]; }); }
+  function refreshBattles(){
+    api("/api/battles").then(function(d){
+      var items = (d.battles || []).slice(-10).reverse();
+      if(!items.length){ $("battlehist").textContent = "no battles yet this run"; return; }
+      $("battlehist").innerHTML = items.map(function(b){
+        var s = (b.hostScore != null && b.guestScore != null)
+          ? " — " + esc(b.host) + " " + b.hostScore + " vs " + b.guestScore + " " + esc(b.guest) : "";
+        return "<div>⚔ " + esc(b.type) + s + "</div>";
+      }).join("");
+    }).catch(function(){ $("battlehist").textContent = "battles need a valid token"; });
+  }
+  function refreshStats(){
+    api("/api/stats").then(function(s){
+      $("statsline").innerHTML = "received <b>" + (s.received||0) + "</b> · allowed <b>" +
+        (s.allowed||0) + "</b> · blocked <b>" + (s.blocked||0) + "</b><br>forwarded <b>" +
+        (s.forwarded||0) + "</b> · fwd errors <b>" + (s.forward_errors||0) + "</b><br>" +
+        "SSE chat <b>" + (s.sse_chat||0) + "</b> · buffered <b>" + (s.chat_buffered||0) + "</b>";
+    }).catch(function(){ $("statsline").textContent = "stats need a valid token"; });
+  }
+  api("/api/overlay-config").then(function(d){ fill(d.config); }).catch(function(){});
+  refreshStats(); setInterval(refreshStats, 5000);
+  refreshBattles(); setInterval(refreshBattles, 8000);
+})();
+</script>
+</body>
+</html>
+

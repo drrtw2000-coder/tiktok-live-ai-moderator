@@ -66,10 +66,13 @@ const EVENT_COLORS: Record<string, string> = {
   question:   C.blue + C.bold,
   like_batch: C.dim,
   emote:      C.dim,
+  battle_start:  C.red + C.bold,
+  battle_update: C.red,
+  battle_end:    C.red + C.bold,
+  battle_punish: C.red,
 };
 
 // Only forward events that have been validated by the normalizer/aggregator.
-// Battles are explicitly excluded for now.
 const ALLOWED_EVENT_TYPES = new Set(Object.keys(EVENT_COLORS));
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -88,6 +91,17 @@ const httpAgent = new http.Agent({
 
 let forwarded = 0;
 let errors    = 0;
+const errorsByReason: Record<string, number> = {};
+
+function tallyError(err: unknown, status?: number): void {
+    errors++;
+    const key = status ? `http_${status}`
+        : (err as Error)?.message?.includes('ECONNREFUSED') ? 'conn_refused'
+        : (err as Error)?.message?.includes('401') ? 'auth_401'
+        : (err as Error)?.message?.includes('timeout') ? 'timeout'
+        : 'other';
+    errorsByReason[key] = (errorsByReason[key] || 0) + 1;
+}
 
 /**
  * Fire-and-forget POST to ttlive's /api/comment.
@@ -118,14 +132,19 @@ function forwardToTTLive(comment: TikTokComment): void {
             if (res.statusCode === 200) {
                 forwarded++;
             } else {
-                errors++;
-                console.log(`${C.yellow}  ⚠  TTLive responded ${res.statusCode}${C.reset}`);
+                tallyError(undefined, res.statusCode);
+                // Responses are async (keep-alive pool): without the closure
+                // the warning can't be attributed — it prints under whatever
+                // line is current. comment IS in scope: name it.
+                const meta = (comment.meta ?? {}) as Record<string, unknown>;
+                const et = (meta.eventType as string) ?? '?';
+                console.log(`${C.yellow}  ⚠  TTLive responded ${res.statusCode} for ${et} ${comment.id}${C.reset}`);
             }
         },
     );
 
     req.on('error', (err) => {
-        errors++;
+        tallyError(err);
         // Only log periodically to avoid flooding console when ttlive is down
         if (errors <= 3 || errors % 50 === 0) {
             console.log(
@@ -146,7 +165,7 @@ function onComment(comment: TikTokComment): void {
   const meta = (comment.meta ?? {}) as Record<string, unknown>;
   const eventType = (meta.eventType as string) ?? 'comment';
 
-  // Filter out battles and any other unvalidated events
+  // Filter any other unvalidated events
   if (!ALLOWED_EVENT_TYPES.has(eventType)) {
     return;
   }
@@ -194,6 +213,26 @@ function onComment(comment: TikTokComment): void {
     case 'emote':
       detail = `${C.dim}@${comment.username} sent an emote${C.reset}`;
       break;
+    case 'battle_start':
+    case 'battle_update':
+    case 'battle_end':
+    case 'battle_punish': {
+      const h = (meta.battleHost as string) || 'Host';
+      const g = (meta.battleGuest as string) || 'Guest';
+      const hs = (meta.battleHostScore as number) ?? '';
+      const gs = (meta.battleGuestScore as number) ?? '';
+      const score = eventType === 'battle_update' ? `: ${hs} vs ${gs}` : '';
+      const crit = meta.battleCrit ? `${C.magenta} CRIT!${C.reset}` : '';
+      detail = `${C.bold}⚔ ${h}${C.reset} vs ${C.bold}${g}${C.reset}${score}${crit}`;
+      break;
+    }
+    case 'live_status': {
+      const st = meta.liveState as string;
+      detail = st === 'live' ? `${C.green}● LIVE${C.reset}`
+        : st === 'waiting' ? `${C.red}■ stream ended${C.reset}`
+        : `${C.yellow}○ ${st}${C.reset}`;
+      break;
+    }
     default:
       detail = `@${comment.username}: ${comment.text}`;
   }
@@ -209,7 +248,8 @@ function onComment(comment: TikTokComment): void {
 // ═════════════════════════════════════════════════════════════════════════════
 
 async function main(): Promise<void> {
-    const username = process.argv[2];
+    const rawArg = process.argv[2] || "";
+    const username = rawArg.replace(/^"|"$/g, "").trim();
     const apiKey   = process.env.TIKTOK_EULER_API_KEY || '';
 
     if (!username) {
@@ -238,7 +278,7 @@ ${C.bold}Environment:${C.reset}
         username:         username.replace(/^@/, ''),
         eulerApiKey:      apiKey,
         enableGifts:      true,    // Wire up gifts (streaks handled by aggregator)
-        enableBattles:    false,   // Keeping battles off as requested
+        enableBattles:    true,    // PK battles: score bar + winner on overlay
         enableSocial:     true,    // Wire up follow, share, join, subscribe
         enableQuestions:  true,    // Wire up Q&A feature
         enableLikes:      true,    // Wire up batched likes
@@ -253,7 +293,7 @@ ${C.bold}Environment:${C.reset}
     console.log(`  TTLive:  ${C.bold}${TTLIVE_URL}${API_PATH}${C.reset}`);
     console.log(`  API Key: ${apiKey ? `${C.green}set${C.reset}` : `${C.yellow}not set${C.reset}`}`);
     console.log(`  Token:   ${TTLIVE_API_TOKEN ? `${C.green}set${C.reset}` : `${C.yellow}NOT SET — server will 401 every forward${C.reset}`}`);
-    console.log(`  Mode:    ${C.bold}comments + gifts + social + questions + likes${C.reset}`);
+    console.log(`  Mode:    ${C.bold}comments + gifts + battles + social + questions + likes${C.reset}`);
     console.log(`${C.cyan}${'='.repeat(60)}${C.reset}`);
     console.log('');
 
@@ -274,20 +314,64 @@ ${C.bold}Environment:${C.reset}
     console.log(`${C.dim}  Forwarding comments to ${TTLIVE_URL}${C.reset}`);
     console.log('');
 
+    // ── Live-status watch: connected/waiting/ended -> overlay pill ──
+    // The overlay otherwise never learns the stream ended (control frames
+    // are consumed internally for reconnects). Poll cheaply, emit on change.
+    let lastLiveState = '';
+    const emitLiveStatus = (state: string, roomId: string | null) => {
+        if (state === lastLiveState) return;
+        lastLiveState = state;
+        const live = state === 'connected' ? 'live'
+            : state === 'waiting_for_live' ? 'waiting' : 'connecting';
+        console.log(`${C.dim}  📡 live status: ${live}${C.reset}`);
+        const comment: TikTokComment = {
+            id: `live-${live}-${Date.now()}`,
+            userId: 'system',
+            username: 'TikTok',
+            text: live === 'live' ? `[LIVE] @${config.username} is live`
+                : live === 'waiting' ? `[LIVE] @${config.username} ended`
+                : `[LIVE] @${config.username} ${live}`,
+            timestamp: Date.now(),
+            meta: { eventType: 'live_status', liveState: live, roomId },
+        };
+        forwardToTTLive(comment);
+    };
+    try {
+        const ci0 = capture.getConnectionInfo();
+        emitLiveStatus(ci0.state, ci0.roomId ?? null);
+    } catch { /* noop */ }
+    const liveTimer = setInterval(() => {
+        try {
+            const ci = capture.getConnectionInfo();
+            emitLiveStatus(ci.state, ci.roomId ?? null);
+        } catch { /* noop */ }
+    }, 5000);
+    if (typeof (liveTimer as unknown as { unref?: unknown }).unref === 'function') {
+        (liveTimer as unknown as { unref(): void }).unref();
+    }
+
     // ── Periodic stats ─────────────────────────────────────────
     const statsTimer = setInterval(() => {
         const stats = capture.getStats();
+        const drops = (stats as unknown as { droppedJoins?: number }).droppedJoins ?? 0;
         console.log(
-            `${C.cyan}  📊 ${forwarded} forwarded │ ${errors} errors │ ` +
+            `${C.cyan}  📊 ${forwarded} forwarded │ ${errors} errors ` +
+            `${JSON.stringify(errorsByReason)} │ ` +
             `viewers: ${stats.connection.viewerCount} │ ` +
-            `state: ${stats.connection.state}${C.reset}`,
+            `state: ${stats.connection.state} │ ` +
+            `droppedJoins: ${drops}${C.reset}`,
         );
     }, 60_000);
+    if (typeof (statsTimer as unknown as { unref?: unknown }).unref === 'function') {
+        (statsTimer as unknown as { unref(): void }).unref();
+    }
 
     // ── Shutdown ───────────────────────────────────────────────
     const shutdown = async (signal: string) => {
         console.log(`\n${C.yellow}  ⚠  ${signal} — shutting down${C.reset}`);
         clearInterval(statsTimer);
+        clearInterval(liveTimer);
+        try { httpAgent.destroy(); } catch { /* noop */ }
         await capture.shutdown();
         console.log(`${C.green}  ✅ Done.${C.reset} Forwarded ${forwarded} comments (${errors} errors)`);
         process.exit(0);
@@ -295,6 +379,10 @@ ${C.bold}Environment:${C.reset}
 
     process.on('SIGTERM', () => shutdown('SIGTERM'));
     process.on('SIGINT',  () => shutdown('SIGINT'));
+    const sigbreak = process as unknown as {
+        on(ev: string, fn: () => void): void;
+    };
+    try { sigbreak.on('SIGBREAK', () => shutdown('SIGBREAK')); } catch { /* non-Windows */ }
 
     // Keep alive
     await new Promise(() => {});

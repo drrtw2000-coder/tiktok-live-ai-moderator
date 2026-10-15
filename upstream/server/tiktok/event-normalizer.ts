@@ -118,6 +118,8 @@ export interface RawBattleEvent {
         nickname?:  string;
     }>;
     battleId?:   string;
+    battleSetting?: BattleTiming;   // timers: duration/endTimeMs live here
+    action?:     number;            // BattleAction enum (4 OPEN, 5 FINISH…)
     anchorInfo?: Record<string, {
         user?: {
             userId?:    string;
@@ -145,10 +147,22 @@ export interface RawTeamArmy {
     userArmies?:     Record<string, unknown>;
 }
 
+export interface BattleTiming {
+    startTimeMs?:         string | number;
+    endTimeMs?:           string | number;
+    duration?:            string | number;   // base seconds
+    extraDurationSecond?: string | number;   // overtime seconds
+}
+
 export interface RawArmiesEvent {
     battleId?:          string;
     battleStatus?:      number;
     totalDiamondCount?: number;
+    triggerCriticalStrike?: boolean;   // crit / multiplier landed on this play
+    fromUserId?:        string;        // whose gift triggered this frame
+    giftId?:            string | number;
+    giftCount?:         number;
+    battleSettings?:    BattleTiming;  // timers repeated per frame
     teamArmies?:        RawTeamArmy[];        // v2 deprecated — always empty
     battleItems?:       Record<string, {       // v3 — actual score data
         userArmy?: Array<{
@@ -198,6 +212,30 @@ export interface RawEmoteEvent {
  */
 function generateId(type: string, stableKey: string): string {
     return `tt-${type}-${stableKey}`;
+}
+
+/** Coerce SDK string|number timing fields to ms/seconds numbers. */
+function numOrUndef(v: string | number | undefined): number | undefined {
+    if (v === undefined || v === null) return undefined;
+    const n = typeof v === 'string' ? parseInt(v, 10) : v;
+    return Number.isFinite(n) ? n : undefined;
+}
+
+/** Pull battle countdown fields out of a BattleSetting/BattleSettings frame. */
+function battleTimingMeta(t: BattleTiming | undefined): Partial<CommentMeta> {
+    if (!t) return {};
+    const out: Partial<CommentMeta> = {};
+    const dur = numOrUndef(t.duration);
+    if (dur !== undefined) out.battleDurationS = dur;
+    const end = numOrUndef(t.endTimeMs);
+    if (end !== undefined) out.battleEndsAt = end;
+    const start = numOrUndef(t.startTimeMs);
+    // startTimeMs lets mid-battle joins compute an exact countdown
+    // (start + duration) instead of overstating first-seen + duration.
+    if (start !== undefined && start > 0) (out as Record<string, unknown>).battleStartMs = start;
+    const extra = numOrUndef(t.extraDurationSecond);
+    if (extra !== undefined) out.battleExtraS = extra;
+    return out;
 }
 
 /**
@@ -300,6 +338,10 @@ export function normalizeGift(gift: ResolvedGift): TikTokComment {
     meta.giftName        = gift.giftName;
     meta.giftDiamonds    = gift.diamondCount;
     meta.giftRepeatCount = gift.repeatCount;
+    // PK multiplier moment (2x/3x/CRIT) when the SDK sent matchInfo.
+    // Absent most of the time — overlay treats it as optional garnish.
+    if (gift.giftMult) meta.giftMult = gift.giftMult;
+    if (gift.giftCrit) meta.giftCrit = true;
 
     const countStr   = gift.repeatCount > 1 ? ` x${gift.repeatCount}` : '';
     const diamondStr = totalDiamonds > 0 ? ` (${totalDiamonds}💎)` : '';
@@ -498,6 +540,11 @@ export interface BattleState {
     hostNickname:   string;
     guestUserId:    string;
     guestNickname:  string;
+    // @uniqueIds (displayId) for home-side detection: the bridge watches one
+    // streamer, who must read LEFT like TikTok. Compared against
+    // config.username in the emitter → battleHomeSide meta → overlay flip.
+    hostDisplayId?: string;
+    guestDisplayId?: string;
 }
 
 /**
@@ -517,8 +564,10 @@ export interface BattleState {
 export function normalizeBattleStart(data: RawBattleEvent): { comment: TikTokComment; battleState: BattleState | null } {
     let hostUserId   = '';
     let hostNickname = '';
+    let hostDisplayId = '';
     let guestUserId  = '';
     let guestNickname = '';
+    let guestDisplayId = '';
 
     // v3 path: extract from anchorInfo
     if (data.anchorInfo && Object.keys(data.anchorInfo).length > 0) {
@@ -536,6 +585,7 @@ export function normalizeBattleStart(data: RawBattleEvent): { comment: TikTokCom
 
         for (const [userId, info] of anchorEntries) {
             const nick = info.user?.nickName || info.user?.displayId || userId;
+            const disp = info.user?.displayId || '';
 
             if (teamMap.size > 0) {
                 // teamUsers available: use teamId for host/guest assignment
@@ -543,18 +593,22 @@ export function normalizeBattleStart(data: RawBattleEvent): { comment: TikTokCom
                 if (teamId === '1' || (!hostUserId && !teamId)) {
                     hostUserId   = userId;
                     hostNickname = nick;
+                    hostDisplayId = disp;
                 } else {
                     guestUserId  = userId;
                     guestNickname = nick;
+                    guestDisplayId = disp;
                 }
             } else {
                 // No teamUsers: positional assignment (first = host, second = guest)
                 if (!hostUserId) {
                     hostUserId   = userId;
                     hostNickname = nick;
+                    hostDisplayId = disp;
                 } else if (!guestUserId) {
                     guestUserId  = userId;
                     guestNickname = nick;
+                    guestDisplayId = disp;
                 }
             }
         }
@@ -564,9 +618,11 @@ export function normalizeBattleStart(data: RawBattleEvent): { comment: TikTokCom
     if (!hostUserId && data.battleUsers?.length) {
         hostUserId   = data.battleUsers[0]?.userId || '';
         hostNickname = data.battleUsers[0]?.nickname || '';
+        hostDisplayId = data.battleUsers[0]?.uniqueId || '';
         if (data.battleUsers.length > 1) {
             guestUserId  = data.battleUsers[1]?.userId || '';
             guestNickname = data.battleUsers[1]?.nickname || '';
+            guestDisplayId = data.battleUsers[1]?.uniqueId || '';
         }
     }
 
@@ -578,11 +634,26 @@ export function normalizeBattleStart(data: RawBattleEvent): { comment: TikTokCom
         hostNickname,
         guestUserId,
         guestNickname,
+        hostDisplayId: hostDisplayId || undefined,
+        guestDisplayId: guestDisplayId || undefined,
     } : null;
 
     const meta: CommentMeta = {
         eventType: 'battle_start',
         battleId:  String(data.battleId ?? Date.now()),
+        battleHost: hostNickname || undefined,
+        battleGuest: guestNickname || undefined,
+        battleHostId: hostUserId || undefined,
+        battleGuestId: guestUserId || undefined,
+        battleHostDisplayId: hostDisplayId || undefined,
+        battleGuestDisplayId: guestDisplayId || undefined,
+        // Which source named the sides: teamUsers (reliable) |
+        // positional (anchor-map order — coin flip without team data) |
+        // battleUsers (v2). First thing to check on "host name wrong".
+        identitySource: data.teamUsers?.length ? 'teamUsers'
+            : (data.anchorInfo && Object.keys(data.anchorInfo).length > 0) ? 'positional'
+            : (data.battleUsers?.length ? 'battleUsers' : 'none'),
+        ...battleTimingMeta(data.battleSetting as BattleTiming | undefined),
     };
 
     const comment: TikTokComment = {
@@ -613,12 +684,27 @@ export function normalizeBattleStart(data: RawBattleEvent): { comment: TikTokCom
  *   Never from battleItems keys (gift senders) or userArmy nicknames.
  *   When BattleState is unavailable, generic "Host"/"Guest" labels are used.
  *
+ * SIDE STABILITY (mid-battle joins):
+ *   When the bridge connects mid-battle the start frame is missed and
+ *   BattleState is null. battleItems then only yields per-anchor totals
+ *   with NO side mapping — naive per-frame positional assignment
+ *   (first entry = host) flip-flops host/guest whenever gift-sender order
+ *   changes (observed live: 3076v29 became 29v3079 four seconds later).
+ *   Callers MUST pass a persistent `anchorSides` map (owned by the emitter,
+ *   keyed by anchorId, pinned first-seen = host-side). The map is seeded
+ *   from BattleState when available and pinned otherwise, so sides stay
+ *   stable for the whole battle even without a start frame.
+ *
  * SDK TriggerReason enum for battleStatus:
  *   0 = UNKNOWN, 1 = SCORE_UPDATE, 2 = BATTLE_END, 4 = KEEP_ALIVE
  *
  * Text format: "[BATTLE_UPDATE] HostName: 3195 vs GuestName: 1200"
  */
-export function normalizeBattleUpdate(data: RawArmiesEvent, battleState?: BattleState): TikTokComment {
+export function normalizeBattleUpdate(
+    data: RawArmiesEvent,
+    battleState?: BattleState,
+    anchorSides?: Map<string, 'host' | 'guest'>,
+): TikTokComment {
     // ── Labels: ALWAYS from BattleState (never from gift sender data) ────
     const hostLabel  = battleState?.hostNickname || 'Host';
     const guestLabel = battleState?.guestNickname || 'Guest';
@@ -684,7 +770,40 @@ export function normalizeBattleUpdate(data: RawArmiesEvent, battleState?: Battle
             scoreSource = 'battleItems-mapped';
         }
 
-        // If no BattleState match, use positional (first anchor = host)
+        // Stable pinning: first-seen anchor = host side, second = guest side.
+        // The map persists across frames (owned by the emitter), so sides
+        // NEVER flip mid-battle. Without this, per-frame positional order
+        // (gift-sender insertion order) swaps host/guest at random.
+        if (scoreSource === 'none' && anchorSides && anchorScores.size > 0) {
+            // Seed from BattleState when we have it (authoritative).
+            if (battleState?.hostUserId && !anchorSides.has(battleState.hostUserId)) {
+                if (anchorSides.size === 0) anchorSides.set(battleState.hostUserId, 'host');
+            }
+            if (battleState?.guestUserId && !anchorSides.has(battleState.guestUserId)) {
+                if ([...anchorSides.values()].filter(v => v === 'guest').length === 0) {
+                    anchorSides.set(battleState.guestUserId, 'guest');
+                }
+            }
+            // Pin any unmapped anchors in first-seen order.
+            for (const anchorId of anchorScores.keys()) {
+                if (!anchorSides.has(anchorId)) {
+                    const hosts = [...anchorSides.values()].filter(v => v === 'host').length;
+                    anchorSides.set(anchorId, hosts === 0 ? 'host' : 'guest');
+                }
+                if (anchorSides.size >= 2) break;
+            }
+            let mapped = false;
+            for (const [anchorId, score] of anchorScores) {
+                const side = anchorSides.get(anchorId);
+                if (side === 'host') { hostScore = score; mapped = true; }
+                else if (side === 'guest') { guestScore = score; mapped = true; }
+            }
+            if (mapped) scoreSource = 'battleItems-pinned';
+        }
+
+        // Last resort: single-frame positional (first anchor = host).
+        // Unstable across frames — only when no pin map was provided
+        // (legacy callers). Prefer passing anchorSides.
         if (scoreSource === 'none' && anchorScores.size >= 2) {
             const scores = Array.from(anchorScores.values());
             hostScore  = scores[0];
@@ -700,12 +819,27 @@ export function normalizeBattleUpdate(data: RawArmiesEvent, battleState?: Battle
         eventType:    'battle_update' as string,
         battleId:     data.battleId ?? String(Date.now()),
         battleStatus: data.battleStatus,
+        battleHost:   battleState?.hostNickname || undefined,
+        battleGuest:  battleState?.guestNickname || undefined,
+        battleHostId: battleState?.hostUserId || undefined,
+        battleGuestId: battleState?.guestUserId || undefined,
+        battleHostScore: hostScore,
+        battleGuestScore: guestScore,
+        battleCrit:   data.triggerCriticalStrike || undefined,
+        battleFromUser: (data.fromUserId as string) || undefined,
+        battleGiftId: data.giftId !== undefined ? String(data.giftId) : undefined,
+        battleGiftCount: (data.giftCount as number) ?? undefined,
+        ...battleTimingMeta(data.battleSettings as BattleTiming | undefined),
         // Expose score source for diagnostic visibility
         scoreSource:  scoreSource as string,
     };
 
     return {
-        id:        generateId('battle', `update-${data.battleId ?? Date.now()}-${hostScore}-${guestScore}`),
+        // Unique per frame: scores alone are NOT unique — identical totals
+        // re-emit after the 10 s score gate, and the moderator drops
+        // repeated ids as duplicates (frozen overlay). The emitter's own
+        // score-change gate already prevents spam, so uniqueness is safe.
+        id:        generateId('battle', `update-${data.battleId ?? Date.now()}-${hostScore}-${guestScore}-${Date.now()}`),
         userId:    'system',
         username:  'TikTok',
         text:      `[BATTLE_UPDATE] ${hostLabel}: ${hostScore} vs ${guestLabel}: ${guestScore}`,
@@ -722,8 +856,12 @@ export function normalizeBattleUpdate(data: RawArmiesEvent, battleState?: Battle
  * Text format: "[BATTLE_END] Battle ended"
  */
 export function normalizeBattleEnd(data: RawBattlePunishEvent): TikTokComment {
+    const reason = (data as { reason?: number }).reason;
     const meta: CommentMeta = {
         eventType: 'battle_punish',
+        battleEndReason: reason === 1 ? 'cut_short' : reason === 0 ? 'time_up'
+            : reason !== undefined ? `reason_${reason}` : undefined,
+        ...battleTimingMeta((data as { battleSettings?: BattleTiming }).battleSettings),
     };
 
     return {

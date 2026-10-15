@@ -27,7 +27,16 @@ logs/
 server-preview*.log
 server-restart.log
 cloudflared*.log
+tunnel.log
 debug.log
+# Runtime state (pid, tunnel url, sqlite WAL sidecars)
+.pid
+.tunnel-url
+public-link.txt
+upstream/.bridge-*.lock
+*.db-shm
+*.db-wal
+*.db-journal
 # Local test clips (large binaries, machine-specific)
 /moderator/media/*.mp4
 /moderator/media/*.m4v

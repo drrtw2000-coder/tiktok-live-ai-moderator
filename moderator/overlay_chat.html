@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Clean Chat — AI Moderator</title>
+<title>Gift Alerts — AI Moderator</title>
 <style>
   :root{
     --font: "Segoe UI", system-ui, -apple-system, Roboto, sans-serif;
@@ -16,7 +16,7 @@
   #stage{position:fixed;inset:0;display:flex;flex-direction:column;justify-content:flex-end;
     padding:14px;gap:8px;pointer-events:none}
   #alert{position:fixed;top:14px;left:14px;right:14px;display:flex;flex-direction:column;
-    gap:8px;pointer-events:none}
+    gap:8px;pointer-events:none;align-items:center}
   .msg{background:var(--chat-bg);border:1px solid rgba(255,255,255,.14);border-radius:var(--radius);
     padding:8px 12px;font-size:18px;line-height:1.35;backdrop-filter:blur(6px);
     animation:slidein .28s ease-out;word-wrap:break-word;box-shadow:0 4px 18px rgba(0,0,0,.35)}
@@ -33,21 +33,138 @@
   .msg .tag{font-size:11px;font-weight:700;border-radius:6px;padding:1px 6px;margin-right:6px;
     vertical-align:2px;background:#334155;color:#e2e8f0}
   .msg.gift .tag{background:#f59e0b;color:#111}
+  /* ---- gift celebration cards (overlay is gifts-only by default) ---- */
+  #fx{position:fixed;inset:0;pointer-events:none;z-index:4}
+  #fx canvas{width:100%;height:100%;display:block}
+  .gift-card{position:relative;overflow:hidden;text-align:center;
+    border-radius:18px;padding:14px 22px;min-width:min(440px,80vw);max-width:min(560px,90vw);
+    font-weight:800;backdrop-filter:blur(8px);box-shadow:0 8px 40px rgba(0,0,0,.45);
+    animation:cardin .45s cubic-bezier(.2,1.5,.35,1)}
+  .gift-card .from{font-size:15px;font-weight:700;letter-spacing:.04em;opacity:.9;text-transform:uppercase}
+  .gift-card .gift{font-size:30px;line-height:1.15;margin:2px 0}
+  .gift-card .sub{font-size:14px;font-weight:600;opacity:.85}
+  .gift-card .combo{position:absolute;top:8px;right:12px;font-size:13px;font-weight:800;
+    background:rgba(0,0,0,.5);border:1px solid rgba(255,255,255,.3);border-radius:99px;padding:2px 10px}
+  .gift-card.t1{background:linear-gradient(135deg,rgba(30,41,59,.92),rgba(15,23,42,.92));
+    border:1px solid rgba(148,163,184,.55);font-size:20px}
+  .gift-card.t1 .gift{font-size:24px}
+  .gift-card.t2{background:linear-gradient(135deg,rgba(4,47,46,.94),rgba(6,78,59,.94));
+    border:1px solid rgba(52,211,153,.7);box-shadow:0 0 28px rgba(52,211,153,.35)}
+  .gift-card.t3{background:linear-gradient(135deg,rgba(88,28,135,.94),rgba(30,58,138,.94));
+    border:1px solid rgba(167,139,250,.8);box-shadow:0 0 34px rgba(167,139,250,.5);
+    animation:cardin .45s cubic-bezier(.2,1.5,.35,1), glowpulse 1.6s ease-in-out .45s infinite}
+  .gift-card.t4{background:linear-gradient(135deg,rgba(124,45,18,.95),rgba(69,10,10,.95));
+    border:2px solid rgba(251,191,36,.9);box-shadow:0 0 44px rgba(251,191,36,.55);
+    animation:cardin .5s cubic-bezier(.2,1.5,.35,1), glowpulse 1.2s ease-in-out .5s infinite, wiggle 2.4s ease-in-out .5s infinite}
+  .gift-card.t4 .gift{font-size:36px}
+  .gift-card.out{transition:opacity .5s, transform .5s;opacity:0;transform:translateY(-14px) scale(.96)}
+  .gift-emoji{position:absolute;font-size:26px;pointer-events:none;animation:floatup 1.6s ease-out forwards}
+  @keyframes floatup{0%{opacity:0;transform:translateY(10px) scale(.6) rotate(-12deg)}
+    15%{opacity:1}100%{opacity:0;transform:translateY(-90px) scale(1.25) rotate(10deg)}}
   #alert .big-banner{background:linear-gradient(90deg,rgba(88,28,135,.92),rgba(30,58,138,.92));
     border:1px solid rgba(167,139,250,.7);border-radius:16px;padding:12px 16px;text-align:center;
     font-size:24px;font-weight:800;animation:giftpop .5s cubic-bezier(.2,1.6,.4,1)}
   #viewers{position:fixed;top:14px;right:14px;background:rgba(0,0,0,.6);border-radius:99px;
     padding:4px 12px;font-size:14px;display:none}
+  /* ---- likes leaderboard (top-3, pulses when the order changes) ---- */
+  #likes{position:fixed;top:14px;left:14px;z-index:2;min-width:210px;max-width:300px;
+    background:rgba(10,10,18,.72);border:1px solid rgba(251,191,36,.45);border-radius:14px;
+    padding:8px 12px 10px;backdrop-filter:blur(6px);pointer-events:none;
+    box-shadow:0 4px 18px rgba(0,0,0,.35);overflow:hidden;
+    transition:opacity .3s ease, transform .3s ease, filter .3s ease}
+  #likes.away{opacity:0;transform:translateY(-14px) scale(.92);filter:blur(4px)}
+  /* modern spring entrance: card rises unblurred, rows cascade, shine sweeps */
+  #likes.enter{animation:likeIn .55s cubic-bezier(.2,1.5,.35,1)}
+  @keyframes likeIn{0%{opacity:0;transform:translateY(20px) scale(.88);filter:blur(8px)}
+    60%{opacity:1;transform:translateY(-3px) scale(1.02);filter:blur(0)}
+    100%{opacity:1;transform:none;filter:blur(0)}}
+  #likes.enter .lrow{animation:linerow .45s cubic-bezier(.2,1.4,.4,1) both}
+  #likes.enter .lrow:nth-child(3){animation-delay:.04s}
+  #likes.enter .lrow:nth-child(4){animation-delay:.08s}
+  #likes.enter .lrow:nth-child(5){animation-delay:.12s}
+  #likes.enter .lrow:nth-child(6){animation-delay:.16s}
+  #likes.enter .lrow:nth-child(7){animation-delay:.20s}
+  #likes.enter .lrow:nth-child(8){animation-delay:.24s}
+  #likes.enter .lrow:nth-child(9){animation-delay:.28s}
+  #likes.enter .lrow:nth-child(10){animation-delay:.32s}
+  #likes.enter .lrow:nth-child(11){animation-delay:.36s}
+  @keyframes linerow{0%{opacity:0;transform:translateX(-16px)}100%{opacity:1;transform:none}}
+  #likes.enter::after{content:"";position:absolute;top:0;bottom:0;width:45%;left:-45%;
+    background:linear-gradient(100deg,transparent,rgba(255,255,255,.22),transparent);
+    animation:likeshine .65s ease-out;pointer-events:none}
+  @keyframes likeshine{to{left:135%}}
+  #likes h3{margin:0 0 6px;font-size:13px;font-weight:800;letter-spacing:.05em;
+    text-transform:uppercase;color:#fde68a}
+  #likes .lrow{display:flex;align-items:center;gap:8px;font-size:15px;font-weight:700;
+    padding:2px 0;animation:slidein .28s ease-out}
+  #likes .lrow .medal{width:22px;text-align:center}
+  #likes .lrow .lname{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  #likes .lrow .ln{color:#fbbf24;font-variant-numeric:tabular-nums}
+  #likes .lrow{will-change:transform}
+  #likes .lrow.fresh{animation:linerow .45s cubic-bezier(.2,1.4,.4,1) both}
+  #likes .lrow.leaving{opacity:0 !important;transform:translateX(14px) !important;
+    transition:opacity .25s ease, transform .25s ease !important}
+  #likes .ln.bump{animation:lnbump .3s ease-out}
+  @keyframes lnbump{0%{transform:scale(1)}40%{transform:scale(1.28)}100%{transform:scale(1)}}
+  /* ---- PK battle bar (top-center; pushes gift alerts down while live) ---- */
+  #battle{position:fixed;top:14px;left:50%;transform:translateX(-50%);z-index:2;
+    width:min(560px,92vw);background:rgba(10,10,18,.82);border:1px solid rgba(248,113,113,.55);
+    border-radius:16px;padding:10px 16px 12px;backdrop-filter:blur(8px);
+    box-shadow:0 8px 32px rgba(0,0,0,.5);display:none;overflow:hidden;
+    transition:opacity .35s ease, transform .35s ease}
+  #battle.on{display:block;animation:cardin .45s cubic-bezier(.2,1.5,.35,1)}
+  #battle.away{opacity:0;transform:translateX(-50%) translateY(-12px) scale(.97)}
+  #battle.swap{animation:likepulse .6s ease-out}
+  #battle .bhead{text-align:center;font-size:12px;font-weight:800;letter-spacing:.08em;
+    text-transform:uppercase;color:#fca5a5;margin-bottom:6px}
+  #battle .brow{display:flex;align-items:center;gap:10px}
+  #battle .bname{flex:1;min-width:0;font-size:17px;font-weight:800;
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  #battle .bname.host{text-align:right;background:linear-gradient(90deg,#22d3ee,#a78bfa);
+    -webkit-background-clip:text;background-clip:text;color:transparent}
+  #battle .bname.guest{text-align:left;color:#fda4af}
+  #battle .bscore{font-size:20px;font-weight:800;font-variant-numeric:tabular-nums;
+    min-width:64px;text-align:center}
+  #battle .bbar{display:flex;height:10px;border-radius:99px;overflow:hidden;margin-top:8px;
+    background:rgba(255,255,255,.12)}
+  #battle .bbar i{display:block;height:100%;transition:width .6s cubic-bezier(.2,1.1,.3,1)}
+  #battle .bbar .h{background:linear-gradient(90deg,#22d3ee,#a78bfa)}
+  #battle .bbar .g{background:linear-gradient(90deg,#f472b6,#f87171)}
+  #battle .bwin{text-align:center;font-size:22px;font-weight:800;margin-top:6px;
+    animation:giftpop .5s cubic-bezier(.2,1.6,.4,1)}
+  #battle .btimer{text-align:center;font-size:12px;font-weight:700;color:#fde68a;
+    font-variant-numeric:tabular-nums;margin-top:4px;min-height:16px}
+  #battle .bflash{position:absolute;inset:0;display:flex;align-items:center;
+    justify-content:center;font-size:30px;font-weight:900;color:#f0abfc;
+    text-shadow:0 0 18px rgba(240,171,252,.8);pointer-events:none}
+  #battle .bflash.go{animation:bcrit .9s ease-out}
+  @keyframes bcrit{0%{opacity:0;transform:scale(.5)}25%{opacity:1;transform:scale(1.15)}
+    60%{opacity:1;transform:scale(1)}100%{opacity:0;transform:scale(1.05)}}
+  #livepill{position:fixed;bottom:26px;right:8px;font-size:11px;font-weight:700;
+    border-radius:99px;padding:2px 10px;background:rgba(0,0,0,.55);color:#34d399}
+  #livepill.off{color:#f87171}
+  body.show-battle #alert{top:132px}
+  #likes .lrow.r1 .lname{background:linear-gradient(90deg,#fde68a,#f59e0b);
+    -webkit-background-clip:text;background-clip:text;color:transparent}
+  #likes .lwait{font-size:13px;color:rgba(255,255,255,.6);font-weight:400}
+  #likes.swap{animation:likepulse .6s ease-out}
+  @keyframes likepulse{0%{transform:scale(1);box-shadow:0 0 0 rgba(251,191,36,0)}
+    30%{transform:scale(1.06);box-shadow:0 0 26px rgba(251,191,36,.55)}
+    100%{transform:scale(1);box-shadow:0 4px 18px rgba(0,0,0,.35)}}
   #status{position:fixed;bottom:4px;right:8px;font-size:11px;color:rgba(255,255,255,.5);
     background:rgba(0,0,0,.45);border-radius:99px;padding:2px 10px}
   #status .dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:#34d399;margin-right:4px}
   #status.off .dot{background:#f87171}
   #empty{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;
     text-align:center;padding:24px;font-size:15px;line-height:1.5;color:rgba(255,255,255,.75);
-    pointer-events:none}
+    pointer-events:none;animation:emptyfade 1s ease 25s forwards}
+  @keyframes emptyfade{to{opacity:0;visibility:hidden}}
   #empty .card{background:rgba(10,10,18,.72);border:1px solid rgba(255,255,255,.14);
     border-radius:14px;padding:14px 18px;max-width:420px;backdrop-filter:blur(6px)}
   #empty code{color:#22d3ee}
+  /* Stream stays clean: testing hints only in ?bg=dark browser-tab mode. */
+  #empty .testhints{display:none}
+  body.solid #empty .testhints{display:inline}
   /* Browser-tab testing: ?bg=dark gives an opaque backdrop. OBS/Studio default
      stays transparent — do NOT set a background unless asked. */
   body.solid{background:#0b0f1a !important}
@@ -146,24 +263,52 @@
   }
   @keyframes slidein{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
   @keyframes giftpop{0%{opacity:0;transform:scale(.7)}100%{opacity:1;transform:scale(1)}}
+  @keyframes cardin{0%{opacity:0;transform:translateY(-18px) scale(.85)}60%{opacity:1;transform:translateY(3px) scale(1.02)}100%{opacity:1;transform:none}}
+  @keyframes glowpulse{0%,100%{filter:brightness(1)}50%{filter:brightness(1.25)}}
+  @keyframes wiggle{0%,100%{transform:rotate(-.6deg)}50%{transform:rotate(.6deg)}}
 </style>
 </head>
 <body>
 <div id="viewers"></div>
+<div id="battle"><div class="bhead">⚔ PK Battle</div><div class="brow"><div class="bname host"></div><div class="bscore"></div><div class="bname guest"></div></div><div class="bbar"><i class="h"></i><i class="g"></i></div><div class="btimer"></div><div class="bflash" style="display:none"></div><div class="bwin" style="display:none"></div></div>
+<div id="likes"><h3>❤️ Top 10 likers</h3><div id="lrows"><div class="lwait">waiting for taps…</div></div></div>
+<div id="fx"><canvas id="fxcanvas"></canvas></div>
 <div id="alert"></div>
 <div id="stage"></div>
-<div id="empty"><div class="card">Waiting for clean chat…<br>Open <code>?bg=dark</code> for a readable browser tab (OBS stays transparent).<br>Run <code>run.bat demo</code> to fire test messages.</div></div>
+<div id="empty"><div class="card"><span class="waitline">Waiting for gifts… 🎁</span><span class="testhints"><br>Open <code>?bg=dark</code> for a readable browser tab (OBS stays transparent).<br>Run <code>run.bat demo</code> to fire test gifts.<br><span style="opacity:.7">Comments overlay is off — TikTok already shows chat. Add <code>?comments=1</code> to bring chat back.</span></span></div></div>
 <div id="pattern"><canvas id="pcanvas"></canvas></div>
 <div id="videolayer"><video id="vid" muted loop autoplay playsinline></video></div>
 <div id="videonote"></div>
 <div id="avatar" class="tl"><div class="face"><span>YOU</span></div><div class="live">LIVE</div><div class="rec"></div><div class="tag">you · camera test</div><i class="c1"></i><i class="c2"></i><i class="c3"></i><i class="c4"></i></div>
 <div id="status"><span class="dot"></span><span id="stext">connecting…</span></div>
+<div id="livepill">● LIVE</div>
 <script>
 (function(){
   "use strict";
   var q = new URLSearchParams(location.search);
   var MAX = Math.min(200, Math.max(5, parseInt(q.get("max") || "50", 10) || 50));
   var HIDE = parseInt(q.get("alerts") || "6000", 10) || 0;
+  /* Comments overlay is OFF by default — TikTok already renders chat.
+     Opt back in with ?comments=1 (or ?chat=1). Everything else still
+     flows to the mod console + TTLive; this only changes what this
+     browser source paints. */
+  var SHOW_COMMENTS = (function(){
+    var v = (q.get("comments") || q.get("chat") || "").toLowerCase();
+    return v === "1" || v === "on" || v === "true" || v === "show";
+  })();
+  /* Gift animation tuning via URL: ?anim=off kills motion (static cards),
+     ?confetti=off kills the particle canvas, ?sound stays reserved.
+     Explicit URL params always win over the admin panel's pushed config. */
+  var ANIM = (q.get("anim") || "").toLowerCase() !== "off";
+  var CONFETTI = (q.get("confetti") || "").toLowerCase() !== "off";
+  var urlKeys = {};
+  ["max", "alerts", "comments", "chat", "anim", "confetti", "likes",
+   "likes_every", "likes_show", "likescard"].forEach(function(k){
+    if(q.get(k) !== null) urlKeys[k] = true;
+  });
+  var LIKES_ON = !((q.get("likescard") || "").toLowerCase() === "0" ||
+    (q.get("likescard") || "").toLowerCase() === "off" ||
+    (q.get("likescard") || "").toLowerCase() === "false");
   var stage = document.getElementById("stage"),
       alertBox = document.getElementById("alert"),
       viewers = document.getElementById("viewers"),
@@ -181,12 +326,138 @@
   function giftInfo(e){
     var m = GIFT_RE.exec(e.text || ""), meta = e.meta || {};
     if(!m) return null;
+    var count = meta.giftRepeatCount || parseInt(m[3] || "1", 10) || 1;
+    var total = meta.giftValue || parseInt(m[4] || "0", 10) || 0;
+    var per = meta.giftDiamonds || (count > 0 ? Math.round(total / count) : total) || 0;
     return {from: e.username || m[1], gift: meta.giftName || m[2],
-      count: meta.giftRepeatCount || parseInt(m[3] || "1", 10),
-      diamonds: meta.giftValue || parseInt(m[4] || "0", 10)};
+      count: count, diamonds: total, per: per,
+      mult: meta.giftMult || null, crit: !!meta.giftCrit,
+      streakable: count > 1};
+  }
+
+  /* ---- gift FX engine: tiered cards + confetti canvas (no deps) ---- */
+  var fxCanvas = document.getElementById("fxcanvas"), fxCtx = null, parts = [];
+  function fxFit(){
+    if(!fxCanvas) return;
+    try{
+      var dpr = Math.min(2, window.devicePixelRatio || 1);
+      fxCanvas.width = Math.floor(window.innerWidth * dpr);
+      fxCanvas.height = Math.floor(window.innerHeight * dpr);
+      if(fxCtx) fxCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    }catch(_){}
+  }
+  try{
+    if(fxCanvas){
+      fxCtx = fxCanvas.getContext("2d");
+      fxFit();
+      window.addEventListener("resize", fxFit);
+    }
+  }catch(_){ fxCtx = null; }
+  var TIER_COLORS = {
+    t1: ["#94a3b8", "#64748b"],
+    t2: ["#34d399", "#22d3ee"],
+    t3: ["#a78bfa", "#f472b6", "#22d3ee"],
+    t4: ["#fbbf24", "#f59e0b", "#f472b6", "#fff7ed"]
+  };
+  var TIER_EMOJI = {t1: "🎁", t2: "💚", t3: "💜", t4: "🌟"};
+  function giftTier(g){
+    if(g.diamonds >= 1000 || g.count >= 20) return "t4"; // whale: Lion/Galaxy class
+    if(g.diamonds >= 200 || g.count >= 10) return "t3";  // big hype
+    if(g.diamonds >= 30 || g.count >= 5) return "t2";    // solid support
+    return "t1";                                          // single Rose etc.
+  }
+  var fxRunning = false;
+  function burst(tier, n){
+    if(!CONFETTI || !ANIM || !fxCtx) return;
+    var colors = TIER_COLORS[tier] || TIER_COLORS.t1;
+    var W = window.innerWidth, H = window.innerHeight;
+    var count = n || (tier === "t4" ? 160 : tier === "t3" ? 110 : tier === "t2" ? 70 : 36);
+    for(var i = 0; i < count; i++){
+      parts.push({
+        x: W / 2 + (Math.random() - .5) * W * .5,
+        y: H * .32 + (Math.random() - .5) * 60,
+        vx: (Math.random() - .5) * (tier === "t1" ? 4 : 9),
+        vy: -Math.random() * (tier === "t4" ? 11 : 7) - 2,
+        g: .22 + Math.random() * .18,
+        s: 3 + Math.random() * (tier === "t4" ? 7 : 5),
+        r: Math.random() * Math.PI,
+        vr: (Math.random() - .5) * .3,
+        c: colors[(Math.random() * colors.length) | 0],
+        life: 1, decay: .004 + Math.random() * .008,
+        shape: Math.random() < .3 ? "circle" : "rect"
+      });
+    }
+    if(parts.length > 900) parts.splice(0, parts.length - 900);
+    if(!fxRunning){ fxRunning = true; requestAnimationFrame(fxTick); }
+  }
+  function fxTick(){
+    if(!fxCtx){ fxRunning = false; return; }
+    var W = window.innerWidth, H = window.innerHeight;
+    fxCtx.clearRect(0, 0, W, H);
+    for(var i = parts.length - 1; i >= 0; i--){
+      var p = parts[i];
+      p.vy += p.g; p.x += p.vx; p.y += p.vy; p.r += p.vr; p.life -= p.decay;
+      if(p.life <= 0 || p.y > H + 30){ parts.splice(i, 1); continue; }
+      fxCtx.save();
+      fxCtx.globalAlpha = Math.max(0, Math.min(1, p.life * 1.4));
+      fxCtx.translate(p.x, p.y); fxCtx.rotate(p.r);
+      fxCtx.fillStyle = p.c;
+      if(p.shape === "circle"){ fxCtx.beginPath(); fxCtx.arc(0, 0, p.s / 2, 0, 6.2832); fxCtx.fill(); }
+      else { fxCtx.fillRect(-p.s / 2, -p.s / 3, p.s, p.s * .66); }
+      fxCtx.restore();
+    }
+    if(parts.length){ requestAnimationFrame(fxTick); }
+    else { fxRunning = false; try{ fxCtx.clearRect(0, 0, W, H); }catch(_){} }
+  }
+  /* Combo stacking: same user + same gift within 12 s merges into one card
+     with a ×N combo badge instead of spamming the screen. */
+  var combos = {};
+  function comboKey(g){ return (g.from + "‖" + g.gift).toLowerCase(); }
+  function combosForget(key, el){
+    // Delete only if the entry still points at this card (a newer streak
+    // may have reused the key). Prevents unbounded key growth on long
+    // streams: every card eventually forgets itself on hide/trim.
+    if(key && combos[key] && (!el || combos[key].el === el)) delete combos[key];
+  }
+  function combosPrune(){
+    var keys = Object.keys(combos);
+    if(keys.length <= 200) return;
+    keys.sort(function(a, b){ return combos[a].at - combos[b].at; });
+    for(var i = 0; i < keys.length - 200; i++) delete combos[keys[i]];
+    // Drop combos whose card is long gone (>60 s, disconnected).
+    var now = Date.now();
+    for(var k in combos){
+      if(!combos[k].el.isConnected && now - combos[k].at > 60000) delete combos[k];
+    }
+  }
+  /* Cap concurrent banners so a gift train can't bury the stream. */
+  var MAX_CARDS = 3;
+  function trimCards(){
+    while(alertBox.children.length > MAX_CARDS){
+      var old = alertBox.firstChild;
+      alertBox.removeChild(old);
+      if(old && old.dataset && old.dataset.ckey) combosForget(old.dataset.ckey, old);
+    }
+  }
+  function spawnFloaters(card, tier, n){
+    if(!ANIM) return;
+    var faces = tier === "t4" ? ["🌟","🎁","💎","✨","🎉"]
+      : tier === "t3" ? ["🎁","💜","✨","💎"]
+      : tier === "t2" ? ["🎁","💚","✨"] : ["🎁","🌹"];
+    for(var i = 0; i < n; i++){
+      var s = document.createElement("span");
+      s.className = "gift-emoji";
+      s.textContent = faces[(Math.random() * faces.length) | 0];
+      s.style.left = (8 + Math.random() * 84) + "%";
+      s.style.bottom = "6px";
+      s.style.animationDelay = (Math.random() * .35) + "s";
+      card.appendChild(s);
+      (function(el){ setTimeout(function(){ el.remove(); }, 2200); })(s);
+    }
   }
 
   function addChat(e){
+    if(!SHOW_COMMENTS) return; // comments overlay OFF — TikTok already shows chat
     var meta = e.meta || {}, div = document.createElement("div"), tag = "";
     div.className = "msg";
     var et = meta.eventType || "comment";
@@ -202,20 +473,573 @@
   }
 
   function addGift(e, g){
-    var big = g.diamonds >= 500 || g.count >= 10;
+    var tier = giftTier(g);
+    var now = Date.now();
+    /* Streak combo: fold rapid repeats from the same sender into the live card. */
+    var key = comboKey(g), prev = combos[key];
+    if(prev && ((now - prev.at) >= 12000 || !prev.el.isConnected)){
+      // Stale entry (window expired or card trimmed): forget so the dict
+      // can't accumulate dead keys over a multi-hour stream.
+      combosForget(key, prev.el);
+      prev = null;
+    }
+    if(prev && (now - prev.at) < 12000 && prev.el.isConnected){
+      prev.total += g.count;
+      prev.diamonds += g.diamonds;
+      var badge = prev.el.querySelector(".combo");
+      if(badge){ badge.textContent = "×" + prev.total + " COMBO"; }
+      var sub = prev.el.querySelector(".sub");
+      if(sub){ sub.textContent = comboSub(prev, tier); }
+      prev.at = now;
+      clearTimeout(prev.timer);
+      prev.timer = scheduleHide(prev.el, tier, key);
+      burst(giftTier({diamonds: prev.diamonds, count: prev.total}),
+        tier === "t1" ? 18 : 40);
+      return;
+    }
     var div = document.createElement("div");
-    if(big){ div.className = "big-banner"; div.textContent =
-      "🎁 " + g.from + " sent " + g.gift + (g.count > 1 ? " ×" + g.count : "") +
-      (g.diamonds ? " (" + g.diamonds + "💎)" : ""); }
-    else { div.className = "msg gift" + (g.diamonds >= 100 ? " big" : "");
-      div.innerHTML = "🎁 <b>" + esc(g.from) + "</b> → <b>" + esc(g.gift) + "</b>" +
-        (g.count > 1 ? " ×" + g.count : "") +
-        (g.diamonds ? " <i>(" + g.diamonds + "💎)</i>" : ""); }
+    div.className = "gift-card " + tier;
+    var icon = TIER_EMOJI[tier] || "🎁";
+    var headline = g.count > 1
+      ? icon + " " + g.gift + " ×" + g.count
+      : icon + " " + g.gift;
+    div.innerHTML =
+      '<div class="from">' + esc(g.from) + " sent</div>" +
+      '<div class="gift">' + esc(headline) + "</div>" +
+      '<div class="sub">' + esc(comboSub({total: g.count, diamonds: g.diamonds}, tier)) + "</div>";
+    if(g.count >= 5){
+      var cb = document.createElement("div");
+      cb.className = "combo";
+      cb.textContent = "×" + g.count + " COMBO";
+      div.appendChild(cb);
+    }
+    if(g.mult){
+      // PK multiplier moment (2x/3x/CRIT) from the gift's matchInfo.
+      var mb = document.createElement("div");
+      mb.className = "combo";
+      mb.textContent = "⚡ " + g.mult;
+      div.appendChild(mb);
+      if(g.crit && typeof flashCrit === "function"){ try{ flashCrit(); }catch(_){} }
+    }
     alertBox.appendChild(div);
-    if(HIDE > 0) setTimeout(function(){
-      div.style.transition = "opacity .6s"; div.style.opacity = "0";
-      setTimeout(function(){ div.remove(); }, 650);
-    }, HIDE + (big ? 4000 : 0));
+    trimCards();
+    spawnFloaters(div, tier, tier === "t4" ? 8 : tier === "t3" ? 6 : tier === "t2" ? 4 : 2);
+    burst(tier);
+    try{ div.dataset.ckey = key; }catch(_){}
+    var rec = {el: div, at: now, total: g.count, diamonds: g.diamonds, timer: 0};
+    rec.timer = scheduleHide(div, tier, key);
+    combos[key] = rec;
+    combosPrune();
+    hideEmptyGift();
+  }
+  function comboSub(c, tier){
+    var bits = [];
+    if(c.diamonds) bits.push(c.diamonds + " 💎 total");
+    if(tier === "t4") bits.push("WHALE ALERT 🐋");
+    else if(tier === "t3") bits.push("huge love!");
+    else if(tier === "t2") bits.push("thank you!");
+    return bits.join(" · ") || "thank you!";
+  }
+  function scheduleHide(el, tier, key){
+    if(HIDE <= 0){
+      // Sticky cards never auto-hide, but the combo window still expires:
+      // forget the key after 12 s so the dict can't grow forever.
+      if(key) setTimeout(function(){ combosForget(key, el); }, 12000);
+      return 0;
+    }
+    var stay = HIDE + (tier === "t4" ? 5000 : tier === "t3" ? 3000 : tier === "t2" ? 1500 : 0);
+    return setTimeout(function(){
+      el.classList.add("out");
+      setTimeout(function(){ el.remove(); if(key) combosForget(key, el); }, 550);
+    }, stay);
+  }
+
+  /* ---- likes leaderboard: top-10 by tapped likes, card pulses on change ----
+     Cycles on screen: ?likes_every=10&likes_show=3 (seconds, testing values).
+     ?likes=off pins it visible. */
+  var LIKE_EVERY = Math.min(120000, Math.max(3000,
+        (parseFloat(q.get("likes_every") || "10") || 10) * 1000));
+  var LIKE_SHOW = Math.min(LIKE_EVERY, Math.max(1000,
+        (parseFloat(q.get("likes_show") || "3") || 3) * 1000));
+  var LIKE_CYCLE = (q.get("likes") || "").toLowerCase() !== "off";
+  var likesCycleStarted = false, likesVisible = true, pulsePending = false,
+      likesHideT = 0, likesShowT = 0, likesUnenterT = 0;
+  function pulseLikes(){
+    if(!ANIM) return;
+    likesBox.classList.remove("swap");
+    void likesBox.offsetWidth; /* restart the pulse animation */
+    likesBox.classList.add("swap");
+  }
+  function likesTickHide(){
+    likesHideT = 0;
+    likesBox.classList.add("away"); likesVisible = false;
+    likesShowT = setTimeout(function(){
+      likesShowT = 0;
+      likesBox.classList.remove("away");
+      likesBox.classList.remove("enter");
+      void likesBox.offsetWidth; /* restart the spring entrance */
+      likesBox.classList.add("enter");
+      likesVisible = true;
+      if(pulsePending){ pulsePending = false; pulseLikes(); }
+      likesUnenterT = setTimeout(function(){
+        likesUnenterT = 0; likesBox.classList.remove("enter");
+      }, 900);
+      likesHideT = setTimeout(likesTickHide, LIKE_SHOW);
+    }, Math.max(500, LIKE_EVERY - LIKE_SHOW));
+  }
+  function startLikesCycle(){
+    if(likesCycleStarted || !LIKE_CYCLE) return;
+    likesCycleStarted = true;
+    likesHideT = setTimeout(likesTickHide, LIKE_SHOW);
+  }
+  function restartLikesCycle(){
+    /* Admin pushed new cycle timings: restart cleanly from visible. */
+    if(likesHideT){ clearTimeout(likesHideT); likesHideT = 0; }
+    if(likesShowT){ clearTimeout(likesShowT); likesShowT = 0; }
+    if(likesUnenterT){ clearTimeout(likesUnenterT); likesUnenterT = 0; }
+    likesBox.classList.remove("away", "enter");
+    likesVisible = true;
+    if(!LIKE_CYCLE || prevOrder === null) return;
+    likesHideT = setTimeout(likesTickHide, LIKE_SHOW);
+  }
+  /* ---- admin-panel live config (URL params above always win) ---- */
+  function applyServerConfig(cfg, live){
+    if(!cfg) return;
+    var cycleChanged = false;
+    if(!urlKeys.comments && !urlKeys.chat && typeof cfg.comments === "boolean" &&
+        cfg.comments !== SHOW_COMMENTS){
+      SHOW_COMMENTS = cfg.comments;
+      if(!SHOW_COMMENTS) stage.innerHTML = "";
+    }
+    if(!urlKeys.likescard && typeof cfg.likes === "boolean" &&
+        cfg.likes !== LIKES_ON){
+      LIKES_ON = cfg.likes;
+      likesBox.style.display = LIKES_ON ? "" : "none";
+    }
+    if(!urlKeys.anim && typeof cfg.anim === "boolean") ANIM = cfg.anim;
+    if(!urlKeys.confetti && typeof cfg.confetti === "boolean") CONFETTI = cfg.confetti;
+    if(!urlKeys.max && typeof cfg.max === "number"){
+      MAX = Math.min(200, Math.max(5, cfg.max)); trim();
+    }
+    if(!urlKeys.alerts && typeof cfg.alerts === "number"){
+      HIDE = Math.max(0, cfg.alerts);
+    }
+    var ne = LIKE_EVERY, ns = LIKE_SHOW;
+    if(!urlKeys.likes_every && typeof cfg.likes_every === "number"){
+      ne = Math.min(120000, Math.max(3000, cfg.likes_every * 1000));
+    }
+    if(!urlKeys.likes_show && typeof cfg.likes_show === "number"){
+      ns = Math.max(1000, cfg.likes_show * 1000);
+    }
+    ns = Math.min(ne, ns);
+    if(ne !== LIKE_EVERY || ns !== LIKE_SHOW){
+      LIKE_EVERY = ne; LIKE_SHOW = ns; cycleChanged = true;
+    }
+    if(cycleChanged && likesCycleStarted) restartLikesCycle();
+    if(live) hideEmpty();
+  }
+  var likeTotals = {}, prevOrder = null, likesBox = document.getElementById("likes"),
+      MEDALS = ["🥇", "🥈", "🥉"];
+  function medal(i){ return i < MEDALS.length ? MEDALS[i] : "#" + (i + 1); }
+  function fmtN(n){
+    // Full points by default (3,412 — never 3.4K). ?compact=1 keeps the
+    // short form for tight scenes; ?fullscores=0 also forces short.
+    if(q.get("compact") === "1" || (q.get("fullscores") || "").toLowerCase() === "0"){
+      return n >= 1000 ? (n / 1000).toFixed(1) + "K" : "" + n;
+    }
+    try{ return Number(n || 0).toLocaleString("en-US"); }
+    catch(_){ return "" + (n || 0); }
+  }
+  function renderLikes(rows, changed){
+    /* Persistent rows + FLIP reorder: no innerHTML rebuild, no flicker.
+       Counts tick in place; only moved/new rows animate. */
+    var box = document.getElementById("lrows");
+    var wait = box.querySelector(".lwait");
+    if(wait && rows.length) wait.remove();
+    var first = {}, k;
+    for(k in likeRows){
+      if(likeRows[k].el.isConnected) first[k] = likeRows[k].el.offsetTop;
+    }
+    var want = {};
+    rows.forEach(function(r){ want[r.id] = true; });
+    Object.keys(likeRows).forEach(function(k){
+      if(want[k]) return;
+      var dead = likeRows[k].el;
+      delete likeRows[k]; delete first[k];
+      if(likesVisible && dead.isConnected){
+        dead.classList.add("leaving");
+        (function(el){ setTimeout(function(){ el.remove(); }, 260); })(dead);
+      } else { dead.remove(); }
+    });
+    rows.forEach(function(r, i){
+      var rec = likeRows[r.id];
+      if(!rec){
+        var div = document.createElement("div");
+        div.className = "lrow r" + (i + 1) + " fresh";
+        div.innerHTML = '<span class="medal"></span>' +
+          '<span class="lname"></span><span class="ln"></span>';
+        rec = likeRows[r.id] = {el: div,
+          medal: div.children[0], name: div.children[1], num: div.children[2]};
+        box.appendChild(div);
+      } else {
+        rec.el.className = "lrow r" + (i + 1);
+        box.appendChild(rec.el); /* move into new order */
+      }
+      rec.medal.textContent = medal(i);
+      if(rec.name.textContent !== r.name) rec.name.textContent = r.name;
+      var t = fmtN(r.total);
+      if(rec.num.textContent !== t){
+        rec.num.textContent = t;
+        rec.num.classList.remove("bump");
+        void rec.num.offsetWidth;
+        rec.num.classList.add("bump");
+      }
+    });
+    /* FLIP: invert moves, then release together next frame for one glide. */
+    var moved = [];
+    rows.forEach(function(r){
+      var el = likeRows[r.id].el, f = first[r.id];
+      if(f === undefined) return; /* new row: CSS entrance covers it */
+      var d = f - el.offsetTop;
+      if(d){
+        el.style.transition = "none";
+        el.style.transform = "translateY(" + d + "px)";
+        moved.push(el);
+      }
+    });
+    if(moved.length){
+      requestAnimationFrame(function(){
+        moved.forEach(function(el){
+          el.style.transition = "transform .55s cubic-bezier(.2,1.2,.3,1)";
+          el.style.transform = "";
+        });
+        setTimeout(function(){
+          moved.forEach(function(el){
+            if(el.isConnected){ el.style.transition = ""; el.style.transform = ""; }
+          });
+        }, 650);
+      });
+    }
+    if(changed){
+      if(likesVisible || !LIKE_CYCLE) pulseLikes();
+      else pulsePending = true; /* order moved off-screen: pulse on next show */
+    }
+  }
+  var likeRows = {}, renderQueued = false;
+  var likeRoom = null, lastLiveState = null;
+  function resetLikes(reason){
+    // New stream or new room: yesterday's leaderboard must not haunt
+    // today's overlay. Clears totals + DOM rows; next frames rebuild.
+    likeTotals = {}; prevOrder = null;
+    for(var k in likeRows){ try{ likeRows[k].el.remove(); }catch(_){} }
+    likeRows = {};
+    try{ renderTop(); }catch(_){}
+    try{ console.log("[overlay] likes reset (" + reason + ")"); }catch(_){}
+  }
+  function renderTop(){
+    renderQueued = false;
+    var ids = Object.keys(likeTotals);
+    var rows = ids.map(function(k){ return {id: k, name: likeTotals[k].name, total: likeTotals[k].total}; });
+    rows.sort(function(a, b){ return b.total - a.total; });
+    rows = rows.slice(0, 10);
+    var order = rows.map(function(r){ return r.id; }).join("|");
+    var changed = (prevOrder !== null && order !== prevOrder);
+    renderLikes(rows, changed);
+    prevOrder = order;
+  }
+  function updateLikes(e){
+    var meta = e.meta || {};
+    var rm = meta.room || null;
+    if(rm && likeRoom && rm !== likeRoom) resetLikes("room " + likeRoom + " -> " + rm);
+    if(rm) likeRoom = rm;
+    var n = parseInt(meta.likeCount || "0", 10) || 0;
+    if(n <= 0) return;
+    var id = e.userId || e.username || "?";
+    var rec = likeTotals[id];
+    if(!rec) rec = likeTotals[id] = {name: e.username || id, total: 0};
+    rec.name = e.username || rec.name;
+    rec.total += n;
+    var ids = Object.keys(likeTotals);
+    if(ids.length > 500){ /* memory cap: evict the smallest */
+      ids.sort(function(a, b){ return likeTotals[a].total - likeTotals[b].total; });
+      for(var k = 0; k < ids.length - 500; k++) delete likeTotals[ids[k]];
+    }
+    startLikesCycle();
+    /* Coalesce rapid batches into one render per frame: no thrash. */
+    if(renderQueued) return;
+    renderQueued = true;
+    requestAnimationFrame(renderTop);
+  }
+
+  /* ---- PK battle bar: matchup -> live scores -> winner ---- */
+  var battleBox = document.getElementById("battle"),
+      bHead = battleBox.querySelector(".bhead"),
+      bHost = battleBox.querySelector(".bname.host"),
+      bGuest = battleBox.querySelector(".bname.guest"),
+      bScore = battleBox.querySelector(".bscore"),
+      bBarH = battleBox.querySelector(".bbar .h"),
+      bBarG = battleBox.querySelector(".bbar .g"),
+      bWin = battleBox.querySelector(".bwin"),
+      bTimer = battleBox.querySelector(".btimer"),
+      bFlash = battleBox.querySelector(".bflash"),
+      livePill = document.getElementById("livepill"),
+      curBattle = null, battleHideT = 0, battleTickT = 0, endedCard = null;
+  function fmtClock(ms){
+    if(ms < 0) ms = 0;
+    var s = Math.ceil(ms / 1000);
+    return Math.floor(s / 60) + ":" + ("0" + (s % 60)).slice(-2);
+  }
+  function battleTick(){
+    if(!curBattle || !curBattle.endsAt) return;
+    var left = curBattle.endsAt - Date.now();
+    bTimer.textContent = left > 0 ? "⏱ " + fmtClock(left) : "⏱ ending…";
+  }
+  function startBattleTick(){
+    stopBattleTick();
+    if(curBattle && curBattle.endsAt) battleTickT = setInterval(battleTick, 1000);
+  }
+  function stopBattleTick(){
+    if(battleTickT){ clearInterval(battleTickT); battleTickT = 0; }
+    bTimer.textContent = "";
+  }
+  function flashCrit(){
+    if(!ANIM) return;
+    bFlash.textContent = "⚡ CRITICAL!";
+    bFlash.style.display = "flex";
+    bFlash.classList.remove("go");
+    void bFlash.offsetWidth;
+    bFlash.classList.add("go");
+    setTimeout(function(){ bFlash.style.display = "none"; }, 950);
+  }
+  function bNum(v){ var n = parseInt(v, 10); return isNaN(n) || n < 0 ? 0 : n; }
+  /* Home-left orientation: the watched streamer reads on the LEFT, like TikTok.
+     Priority: server meta battleHomeSide ('host'|'guest', automatic once the
+     bridge knows displayIds) > ?home=<handle-or-name> URL param (instant,
+     no restart: matches against either displayed name, case-insensitive) >
+     default host-left. Render-only: data slots never move, so a mid-battle
+     flip can't corrupt totals — safe to apply on any frame. */
+  var HOME_WANT = (q.get("home") || "").replace(/^@/, "").toLowerCase();
+  function battleFlip(p){
+    if(p.homeSide === "guest") return true;
+    if(p.homeSide === "host") return false;
+    if(HOME_WANT){
+      var h = (p.host || "").toLowerCase(), g = (p.guest || "").toLowerCase();
+      if(g.indexOf(HOME_WANT) >= 0 && h.indexOf(HOME_WANT) < 0) return true;
+    }
+    return false;
+  }
+  function battleEnds(p){
+    /* endTimeMs first; else startTimeMs + duration (exact even for
+       mid-battle joins); else first-seen + duration (overstates when
+       the bridge joined late — best available). TikTok often sends
+       endTimeMs "0" (unset). */
+    if(p.endsAt) return p.endsAt;
+    if(p.startMs && p.startMs > 0 && p.dur && p.dur > 0 && p.dur < 3600){
+      return p.startMs + p.dur * 1000;
+    }
+    if(p.dur && p.dur > 0 && p.dur < 3600) return Date.now() + p.dur * 1000;
+    return null;
+  }
+  function parseBattle(e){
+    var m = e.meta || {}, t = e.text || "";
+    var o = {id: m.battleId || null, host: m.battleHost || null,
+             guest: m.battleGuest || null,
+             hs: (m.battleHostScore === undefined ? undefined : bNum(m.battleHostScore)),
+             gs: (m.battleGuestScore === undefined ? undefined : bNum(m.battleGuestScore)),
+             endsAt: m.battleEndsAt || null, dur: m.battleDurationS || null,
+             startMs: m.battleStartMs || null,
+             homeSide: m.battleHomeSide || null,
+             room: m.room || null,
+             status: (m.battleStatus === undefined ? null : m.battleStatus),
+             crit: !!m.battleCrit,
+             reason: m.battleEndReason || null};
+    var um = t.match(/\[BATTLE_UPDATE\]\s*(.+?):\s*(\d+)\s+vs\s+(.+?):\s*(\d+)\s*$/i);
+    if(um){
+      if(!o.host) o.host = um[1]; if(!o.guest) o.guest = um[3];
+      if(o.hs === undefined) o.hs = bNum(um[2]);
+      if(o.gs === undefined) o.gs = bNum(um[4]);
+    }
+    var sm = t.match(/\[BATTLE_START\][^:]*:\s*(.+?)\s+vs\s+(.+?)\s*$/i);
+    if(sm){ if(!o.host) o.host = sm[1]; if(!o.guest) o.guest = sm[2]; }
+    return o;
+  }
+  function renderBattle(){
+    var b = curBattle; if(!b) return;
+    // Home-left: display positions only — hs/gs slots never move.
+    var flip = !!b.flip;
+    var lName = flip ? b.guest : b.host, lScore = flip ? b.gs : b.hs;
+    var rName = flip ? b.host : b.guest, rScore = flip ? b.hs : b.gs;
+    bHost.textContent = lName; bGuest.textContent = rName;
+    bScore.textContent = fmtN(lScore) + " : " + fmtN(rScore);
+    var tot = b.hs + b.gs, hp = tot > 0 ? (b.hs / tot * 100) : 50;
+    // Bar follows the DATA side (h = host slot) so colors stay put;
+    // with flip the left bar segment belongs to the guest — mirror it.
+    bBarH.style.width = (flip ? 100 - hp : hp) + "%";
+    bBarG.style.width = (flip ? hp : 100 - hp) + "%";
+    var lead = b.hs > b.gs ? b.host : b.gs > b.hs ? b.guest : null;
+    bHead.textContent = "⚔ PK Battle" +
+      (lead ? " · 👑 " + lead + " leads" : (b.hs || b.gs ? " · tied" : ""));
+  }
+  function showBattle(){
+    battleBox.classList.remove("away");
+    battleBox.classList.add("on");
+    document.body.classList.add("show-battle");
+    bWin.style.display = "none";
+    startBattleTick();
+  }
+  function pulseBattle(){
+    if(!ANIM) return;
+    battleBox.classList.remove("swap");
+    void battleBox.offsetWidth;
+    battleBox.classList.add("swap");
+  }
+  function hideBattle(silent){
+    /* Shared teardown. Winner flow already raised its banner (silent=false);
+       the idle watchdog hides quietly (silent=true). */
+    stopBattleTick();
+    if(battleHideT) clearTimeout(battleHideT);
+    battleHideT = setTimeout(function(){
+      battleHideT = 0;
+      battleBox.classList.add("away");
+      setTimeout(function(){
+        battleBox.classList.remove("on", "away");
+        document.body.classList.remove("show-battle");
+        curBattle = null;
+      }, 400);
+    }, silent ? 0 : 20000);
+  }
+  /* Idle watchdog: no frames for 120 s means the end frame was missed
+     (bridge restart, dropped frame) — never leave a stale bar up. */
+  setInterval(function(){
+    if(curBattle && Date.now() - (curBattle.at || 0) > 120000) hideBattle(true);
+  }, 10000);
+  function updateBattle(e){
+    var et = (e.meta || {}).eventType || "";
+    var p = parseBattle(e);
+    if(et === "battle_start"){
+      if(battleHideT){ clearTimeout(battleHideT); battleHideT = 0; }
+      if(curBattle && p.id && curBattle.id === p.id
+          && (!p.room || !curBattle.room || p.room === curBattle.room)){
+        /* Late start frame for the battle already on screen (SDK delivers
+           updates before the start): adopt the real names, keep live scores. */
+        if(p.host && (curBattle.host === "Host" || !curBattle.host)) curBattle.host = p.host;
+        if(p.guest && (curBattle.guest === "Guest" || !curBattle.guest)) curBattle.guest = p.guest;
+        if(!curBattle.endsAt){ var be = battleEnds(p); if(be) curBattle.endsAt = be; }
+        curBattle.flip = battleFlip(p);
+        curBattle.at = Date.now();
+        renderBattle(); showBattle(); hideEmpty();
+        return;
+      }
+      curBattle = {id: p.id || ("b" + Date.now()),
+        host: p.host || "Host", guest: p.guest || "Guest",
+        hs: 0, gs: 0, leader: null, endsAt: battleEnds(p), at: Date.now(),
+        flip: battleFlip(p), room: p.room};
+      renderBattle(); showBattle(); hideEmpty();
+      return;
+    }
+    if(et === "battle_update"){
+      var roomChanged = !!(p.room && curBattle && curBattle.room && p.room !== curBattle.room);
+      if(!curBattle || (p.id && curBattle.id !== p.id) || roomChanged){
+        /* Room change (bridge retargeted, moderator history mixes rooms):
+           never paint another streamer's battle as yours — fresh bar. */
+        curBattle = {id: p.id || ("b" + Date.now()),
+          host: p.host || "Host", guest: p.guest || "Guest",
+          hs: 0, gs: 0, leader: null, endsAt: battleEnds(p), at: Date.now(),
+          flip: battleFlip(p), room: p.room};
+        showBattle();
+      } else {
+        if(p.host) curBattle.host = p.host;
+        if(p.guest) curBattle.guest = p.guest;
+        curBattle.flip = battleFlip(p);
+        if(p.endsAt && p.endsAt > (curBattle.endsAt || 0)){
+          curBattle.endsAt = p.endsAt; /* overtime extension */
+          startBattleTick();
+        } else if(!curBattle.endsAt && p.startMs){
+          // Timer arrived late (startMs in a later frame): adopt exact end.
+          var be2 = battleEnds(p); if(be2){ curBattle.endsAt = be2; startBattleTick(); }
+        }
+      }
+      if(battleHideT){ clearTimeout(battleHideT); battleHideT = 0; }
+      curBattle.at = Date.now();
+      var nhs = (p.hs === undefined ? curBattle.hs : p.hs),
+          ngs = (p.gs === undefined ? curBattle.gs : p.gs);
+      if(nhs < curBattle.hs * 0.2 && ngs < curBattle.gs * 0.2 &&
+          (curBattle.hs > 50 || curBattle.gs > 50)){
+        /* New round under the same battleId: scores restarted near zero. */
+        curBattle.hs = nhs; curBattle.gs = ngs; curBattle.leader = null;
+      } else {
+        /* Sides are pinned stable upstream, so any change is real data —
+           except single-anchor frames that report the quiet side as 0.
+           Adopt increases and small dips (live corrections, observed
+           90→84); ignore collapses below half (partial-frame artifact). */
+        curBattle.hs = (nhs >= curBattle.hs || nhs > curBattle.hs * 0.5)
+          ? nhs : curBattle.hs;
+        curBattle.gs = (ngs >= curBattle.gs || ngs > curBattle.gs * 0.5)
+          ? ngs : curBattle.gs;
+      }
+      var lead = curBattle.hs > curBattle.gs ? "h" :
+        curBattle.gs > curBattle.hs ? "g" : "t";
+      var changed = curBattle.leader !== null && lead !== curBattle.leader &&
+        lead !== "t";
+      curBattle.leader = lead;
+      renderBattle();
+      if(changed) pulseBattle();
+      if(p.crit) flashCrit();
+      hideEmpty();
+      if(p.status === 2){ finishBattle(p.reason); }
+      return;
+    }
+    if(et === "battle_end" || et === "battle_punish"){
+      if(!curBattle) return;
+      // Ends carry no battleId (moderator inherits) — but ignore ends from
+      // another room so a stale frame can't close the live bar.
+      if(p.room && curBattle.room && p.room !== curBattle.room) return;
+      finishBattle(p.reason);
+      hideEmpty();
+    }
+  }
+  function finishBattle(reason){
+    /* Winner from last known scores + shared teardown. */
+    if(!curBattle) return;
+    var w = curBattle.hs > curBattle.gs ? curBattle.host :
+      curBattle.gs > curBattle.hs ? curBattle.guest : null;
+    renderBattle();
+    var why = reason === "cut_short" ? " · cut short" :
+      reason === "time_up" ? " · time!" : "";
+    bWin.textContent = (w ? "🏆 " + w + " wins!" : "🤝 Draw!") + why;
+    bWin.style.display = "block";
+    if(ANIM && typeof burst === "function"){ try{ burst("t3"); }catch(_){} }
+    hideBattle(false);
+  }
+
+  /* ---- live status pill + ended banner (bridge watches TikTok state) ---- */
+  function setLivePill(state){
+    if(state === "live"){
+      livePill.textContent = "● LIVE"; livePill.classList.remove("off");
+      if(endedCard){ endedCard.remove(); endedCard = null; }
+    } else if(state === "waiting"){
+      livePill.textContent = "■ ENDED"; livePill.classList.add("off");
+      if(!endedCard){
+        endedCard = document.createElement("div");
+        endedCard.className = "big-banner";
+        endedCard.textContent = "■ Stream ended — see you next time!";
+        alertBox.appendChild(endedCard);
+      }
+      hideEmpty();
+    } else {
+      livePill.textContent = "○ " + state; livePill.classList.add("off");
+    }
+  }
+  function handleLive(e){
+    var st = (e.meta || {}).liveState || "connecting";
+    if(st === "live" && lastLiveState && lastLiveState !== "live"){
+      // Fresh stream after an end: drop the previous live's leaderboard
+      // (and any lingering battle bar) instead of showing stale data.
+      resetLikes("new stream");
+      try{ if(curBattle) hideBattle(true); }catch(_){}
+    }
+    lastLiveState = st;
+    setLivePill(st);
   }
 
   function handle(e){
@@ -223,16 +1047,35 @@
     seen.add(e.id);
     if(seen.size > 2000){ var it = seen.values(); seen.delete(it.next().value); }
     var et = (e.meta || {}).eventType || "comment";
+    if(et === "like_batch"){ updateLikes(e); return; }
+    if(et.indexOf("battle") === 0){ updateBattle(e); return; }
+    if(et === "live_status"){ handleLive(e); return; }
     if(typeof e.meta.viewerCount === "number" && e.meta.viewerCount > 0){
       viewers.style.display = "block";
       viewers.textContent = "👁 " + e.meta.viewerCount;
     }
     var g = (et === "gift") ? giftInfo(e) : null;
-    if(g){ addGift(e, g); }
-    addChat(e);
+    if(!g && et === "gift"){
+      /* Never swallow a gift silently: if the text shape is unexpected,
+         fall back to meta fields so the celebration still paints. */
+      var gm = e.meta || {};
+      g = {from: e.username || "?", gift: gm.giftName || "a gift",
+        count: gm.giftRepeatCount || 1, diamonds: gm.giftValue || 0,
+        per: gm.giftDiamonds || 0, streakable: false,
+        mult: gm.giftMult || null, crit: !!gm.giftCrit};
+    }
+    if(g){ addGift(e, g); return; }
+    /* Gifts-only overlay: swallow comments + follows/joins/shares here.
+       ?comments=1 re-enables chat paint; mod console is untouched. */
+    if(SHOW_COMMENTS){ addChat(e); }
   }
 
-  var es = null, retry = 1000, lastId = null, pollTimer = null;
+  var es = null, retry = 1000, lastId = null, pollTimer = null, pollN = 0,
+      pollFail = 0;
+  function jitter(ms){
+    // ±20% jitter: spreads reconnect thundering herds after a server restart.
+    return Math.round(ms * (0.8 + Math.random() * 0.4));
+  }
 
   if((q.get("bg") || "").toLowerCase() === "dark" ||
      q.get("bg") === "1" || (q.get("bg") || "").toLowerCase() === "solid"){
@@ -357,11 +1200,14 @@
 
   var emptyBox = document.getElementById("empty");
   function hideEmpty(){
-    if(emptyBox && stage.children.length > 0){ emptyBox.style.display = "none"; }
+    if(emptyBox && (stage.children.length > 0 || alertBox.children.length > 0)){ emptyBox.style.display = "none"; }
+  }
+  function hideEmptyGift(){
+    if(emptyBox){ emptyBox.style.display = "none"; }
   }
   if(testMode && emptyBox){
     var ecard = emptyBox.querySelector(".card");
-    if(ecard){ ecard.innerHTML = "Test mode — layers on.<br>Chat lands here when live; drop test params for the clean feed."; }
+    if(ecard){ ecard.innerHTML = "Test mode — layers on.<br>Gifts land here when live; drop test params for the celebration feed."; }
   }
 
   function pollOnce(){
@@ -373,18 +1219,30 @@
       if(!r.ok) throw new Error("http " + r.status);
       return r.json();
     }).then(function(d){
-      status.classList.remove("off"); stext.textContent = "live · clean chat";
+      status.classList.remove("off"); stext.textContent = SHOW_COMMENTS ? "live · clean chat" : "live · gifts only";
       (d.messages || []).forEach(handle);
       if(d.messages && d.messages.length) lastId = d.messages[d.messages.length-1].id;
       hideEmpty();
+      pollFail = 0; // success resets backoff
     }).catch(function(){
       status.classList.add("off"); stext.textContent = "reconnecting…";
+      pollFail++;
     });
   }
 
   function pollLoop(){
     pollOnce().finally(function(){
-      pollTimer = setTimeout(pollLoop, 1500);
+      pollN++;
+      /* Refresh pushed admin config every ~15 s for SSE-dead clients. */
+      if(pollN % 10 === 0){
+        fetch("/api/overlay-config").then(function(r){ return r.json(); })
+          .then(function(d){ applyServerConfig(d.config || {}, true); })
+          .catch(function(){});
+      }
+      // Backoff when the server is down for hours (1.5 s -> max 15 s),
+      // jittered so N overlays don't poll in lockstep.
+      var base = pollFail === 0 ? 1500 : Math.min(15000, 1500 * Math.pow(1.5, Math.min(pollFail, 8)));
+      pollTimer = setTimeout(pollLoop, jitter(base));
     });
   }
 
@@ -401,22 +1259,44 @@
     }catch(_){ es = null; }
     if(es){
       es.onopen = function(){ status.classList.remove("off");
-        stext.textContent = "live · clean chat"; retry = 1000; };
+        stext.textContent = SHOW_COMMENTS ? "live · clean chat" : "live · gifts only"; retry = 1000; };
       es.onmessage = function(ev){
         try{ var e = JSON.parse(ev.data); handle(e); if(e.id) lastId = e.id; hideEmpty(); }catch(_){} };
+      try{
+        es.addEventListener("config", function(ev){
+          try{ applyServerConfig(JSON.parse(ev.data), true); }catch(_){}
+        });
+      }catch(_){}
+      try{
+        es.addEventListener("overlay", function(ev){
+          try{ if(JSON.parse(ev.data).cmd === "reload") location.reload(); }catch(_){}
+        });
+      }catch(_){}
       es.onerror = function(){
         status.classList.add("off");
         stext.textContent = "reconnecting…";
         try{ es.close(); }catch(_){}
-        setTimeout(connect, (retry = Math.min(30000, retry * 2)));
+        retry = Math.min(30000, retry * 2);
+        setTimeout(connect, jitter(retry));
       };
     }
   }
-  pollOnce().finally(function(){
-    connect();
-    if(pollTimer){ clearTimeout(pollTimer); }
-    pollTimer = setTimeout(pollLoop, 1500);
-  });
+  /* Boot: server config first (URL params win), then feed + streams. */
+  if(!LIKES_ON){ likesBox.style.display = "none"; }
+  if((q.get("empty") || "").toLowerCase() === "off"){
+    var ez = document.getElementById("empty");
+    if(ez) ez.style.display = "none";
+  }
+  fetch("/api/overlay-config").then(function(r){ return r.json(); })
+    .then(function(d){ applyServerConfig(d.config || {}, false); })
+    .catch(function(){})
+    .finally(function(){
+      pollOnce().finally(function(){
+        connect();
+        if(pollTimer){ clearTimeout(pollTimer); }
+        pollTimer = setTimeout(pollLoop, 1500);
+      });
+    });
 })();
 </script>
 </body>

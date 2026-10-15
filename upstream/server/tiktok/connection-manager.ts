@@ -207,12 +207,31 @@ export class TikTokConnectionManager implements TikTokCapture {
             return;
         } catch (err: unknown) {
             const msg = (err as Error)?.message ?? String(err);
+            const low = msg.toLowerCase();
+
+            const isEulerPermission =
+                low.includes('lack of permission') ||
+                low.includes('euler') && (low.includes('401') || low.includes('402') ||
+                    low.includes('403') || low.includes('permission'));
+            if (isEulerPermission) {
+                log.warn('TIKTOK EULER PERMISSION', {
+                    username: this.config.username,
+                    action: 'Check TIKTOK_EULER_API_KEY quota/plan; ' +
+                        'free tier is rate-limited. Not a code bug.',
+                    error: msg.slice(0, 300),
+                });
+            }
 
             const isOffline =
-                msg.includes('not live') ||
+                low.includes('not live') ||
                 msg.includes('NOT_LIVE') ||
-                msg.includes('LIVE has ended') ||
-                msg.includes('offline');
+                low.includes('live has ended') ||
+                low.includes('offline') ||
+                low.includes("isn't online") ||
+                low.includes('is not online') ||
+                low.includes('user_not_found') ||
+                low.includes('user not found') ||
+                low.includes('not found');
 
             if (isOffline) {
                 log.info('TIKTOK STREAMER OFFLINE', {

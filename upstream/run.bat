@@ -36,7 +36,7 @@ if /i "%MODE%"=="inject" goto inject
 if "%USER%"=="" (
   echo Usage: run.bat @streamername [--wait] [--test ^| --inject]
   echo Example: run.bat @ahappyspell
-  echo          run.bat @ahappyspell --wait   (not live yet: ENTER when live)
+  echo          run.bat @ahappyspell --wait   ^(not live yet: ENTER when live^)
   echo          run.bat @ahappyspell --test
   echo          run.bat --inject
   pause
@@ -51,7 +51,7 @@ if not exist ".env" (
 
 REM -- one-time deps ------------------------------------------------------------
 if not exist "node_modules" (
-  echo [i] Installing dependencies (one-time, ~1 min)...
+  echo [i] Installing dependencies ^(one-time, ~1 min^)...
   call npm install
   if errorlevel 1 (
     echo [ERROR] npm install failed. Install Node.js 20+ from https://nodejs.org/
@@ -67,10 +67,16 @@ if errorlevel 1 (
   pause
   exit /b 1
 )
-powershell -NoProfile -Command "try { (Invoke-WebRequest -Uri 'http://127.0.0.1:3002/healthz' -TimeoutSec 3 -UseBasicParsing).StatusCode } catch { exit 1 }" >nul 2>nul
+set "PORT=3002"
+for /f "usebackq eol=# tokens=1,* delims==" %%a in ("..\moderator\.env") do (
+  if /i "%%a"=="PORT" set "PORT=%%b"
+)
+set "PORT=%PORT: =%"
+if "%PORT%"=="" set "PORT=3002"
+powershell -NoProfile -Command "try { (Invoke-WebRequest -Uri 'http://127.0.0.1:%PORT%/healthz' -TimeoutSec 3 -UseBasicParsing).StatusCode } catch { exit 1 }" >nul 2>nul
 if errorlevel 1 (
-  echo [ERROR] Moderator not answering http://127.0.0.1:3002/healthz
-  echo         Start it first:  a.bat @streamername   (or run.bat in repo root)
+  echo [ERROR] Moderator not answering http://127.0.0.1:%PORT%/healthz
+  echo         Start it first:  a.bat @streamername   ^(or run.bat in repo root^)
   pause
   exit /b 1
 )
@@ -80,7 +86,7 @@ goto bridge
 
 :test
 echo [i] Read-only capture test for %USER% (forwards nothing)...
-call npx ts-node test-tiktok.ts %USER%
+call npx ts-node test-tiktok.ts "%USER%"
 goto done
 
 :inject
@@ -93,11 +99,11 @@ if defined WAIT (
   echo.
   echo [i] %USER% is not live yet - no problem. Time it yourself for an
   echo     instant connect instead of waiting on slow-poll:
-  set /p "GO=Press ENTER when %USER% goes LIVE to connect (Ctrl+C to cancel): "
+  set /p "GO=Press ENTER when %USER% goes LIVE to connect [Ctrl+C to cancel]: "
   set "WAIT="
 )
 echo [i] Bridging %USER% -^> moderator (TTLIVE_URL from .env)...
-call npx ts-node bridge-to-ttlive.ts %USER%
+call npx ts-node bridge-to-ttlive.ts "%USER%"
 echo.
 echo Bridge exited (code %ERRORLEVEL%).
 set /p "RETRY=Press ENTER to (re)connect, or type q + ENTER to quit: "

@@ -245,6 +245,12 @@ class LikeBatcher {
         this.totalCount  = data.totalLikeCount ?? this.totalCount;
         this.lastUser    = data;
 
+        // Bound raid spikes: flush early instead of building a giant batch.
+        if (this.batchCount >= 5000) {
+            this.flush();
+            return;
+        }
+
         // Start timer on first event in batch
         if (!this.timer) {
             this.timer = setTimeout(() => this._flush(), this.intervalMs);
@@ -352,6 +358,13 @@ export class TikTokEventEmitter {
     private _lastBattleEmitAt = 0;
     private _lastBattleId: string | null = null;
     private _battleState: BattleState | null = null;
+    // ── Battle side pinning ─────────────────────────────────────────
+    // Stable anchorId → side map for the current battle. First distinct
+    // anchor pinned = host side, second = guest side. Persists across
+    // frames so mid-battle joins (no start frame, no BattleState) never
+    // flip host/guest when gift-sender order changes. Reset on every
+    // new battleId / battle end. Passed into normalizeBattleUpdate().
+    private _battleAnchorSides = new Map<string, 'host' | 'guest'>();
 
     // ── decodedData escape hatch for battle anchorInfo ────────────
     // Stores raw anchorInfo from WebcastLinkMicBattle protobuf.
@@ -656,11 +669,9 @@ export class TikTokEventEmitter {
     private _onGiftResolved(gift: ResolvedGift): void {
         const comment = normalizeGift(gift);
 
-        // Dedup (gift IDs are generated, but protect against double-resolve)
-        if (this.dedup.checkAndMark(comment.id)) {
-            this._stats.droppedDedup++;
-            return;
-        }
+        // No ring-dedup here on purpose: gift IDs embed Date.now() for
+        // uniqueness, so a dedup check would always miss. Double-resolve
+        // protection lives in the GiftAggregator tombstone/delta layer.
 
         // First-seen tracking
         if (this.firstSeen.checkAndMark(comment.userId) && comment.meta) {
@@ -844,10 +855,39 @@ export class TikTokEventEmitter {
     private _onLikeBatch(lastUser: RawLikeEvent, batchCount: number, totalCount: number): void {
         const comment = normalizeLikeBatch(lastUser, batchCount, totalCount);
         // Likes are batched so no dedup needed
+        if (comment.meta) {
+            const room = this._roomTag();
+            if (room) comment.meta.room = room;
+        }
         this.callbacks.onComment(comment);
     }
 
     // ── Battles ─────────────────────────────────────────────────
+
+    /**
+     * Watched room (@uniqueId, lowercased, no @) for tagging battle frames.
+     * The moderator outlives bridge restarts/retargets and mixes rooms in
+     * history — the overlay resets the bar on room change instead of
+     * showing another streamer's battle as yours.
+     */
+    private _roomTag(): string {
+        return (this.config.username || '').replace(/^@/, '').toLowerCase();
+    }
+
+    /**
+     * Which side ('host' | 'guest') is the watched streamer, if knowable.
+     * Compares config.username against BattleState displayIds. Returns
+     * undefined for mid-battle joins without state (overlay falls back to
+     * ?home= then host-left). Render hint only — never affects scoring.
+     */
+    private _battleHomeSide(): 'host' | 'guest' | undefined {
+        const st = this._battleState;
+        const home = (this.config.username || '').replace(/^@/, '').toLowerCase();
+        if (!st || !home) return undefined;
+        if ((st.hostDisplayId || '').toLowerCase() === home) return 'host';
+        if ((st.guestDisplayId || '').toLowerCase() === home) return 'guest';
+        return undefined;
+    }
 
     private _onBattleStart(data: RawBattleEvent): void {
         this._lastEventAt = Date.now();
@@ -865,6 +905,12 @@ export class TikTokEventEmitter {
         const { comment, battleState } = normalizeBattleStart(data);
         this._battleState = battleState;
         this._stats.battles++;
+        const homeSide = this._battleHomeSide();
+        if (comment.meta) {
+            if (homeSide) comment.meta.battleHomeSide = homeSide;
+            const room = this._roomTag();
+            if (room) comment.meta.room = room;
+        }
 
         log.info('TIKTOK BATTLE START', {
             text:      comment.text,
@@ -872,6 +918,7 @@ export class TikTokEventEmitter {
             hostId:    battleState?.hostUserId,
             guest:     battleState?.guestNickname,
             guestId:   battleState?.guestUserId,
+            homeSide,
             hasAnchorInfo: !!data.anchorInfo,
             hasBattleUsers: !!(data.battleUsers?.length),
         });
@@ -894,19 +941,28 @@ export class TikTokEventEmitter {
             })),
         });
 
-        // Detect new battle (resets tracking)
+        // Detect new battle (resets tracking + side pinning)
         if (data.battleId && data.battleId !== this._lastBattleId) {
             this._lastBattleId = data.battleId;
             this._lastBattleScores = null;
             this._lastBattleEmitAt = 0;
+            this._battleAnchorSides.clear();
         }
 
         // SDK TriggerReason enum:
         //   0 = UNKNOWN, 1 = SCORE_UPDATE, 2 = BATTLE_END, 4 = KEEP_ALIVE
-        const comment = normalizeBattleUpdate(data, this._battleState ?? undefined);
+        const comment = normalizeBattleUpdate(
+            data, this._battleState ?? undefined, this._battleAnchorSides);
+        const homeSide = this._battleHomeSide();
+        if (comment.meta) {
+            if (homeSide) comment.meta.battleHomeSide = homeSide;
+            const room = this._roomTag();
+            if (room) comment.meta.room = room;
+        }
 
-        // Extract scores from the normalized text for dedup
-        const scoreMatch = comment.text.match(/:\s*(\d+)\s*vs\s*\S+:\s*(\d+)/);
+        // Extract scores from the normalized text for dedup.
+        // Names may contain spaces — (.+?) not \S+.
+        const scoreMatch = comment.text.match(/:\s*(\d+)\s*vs\s*.+?:\s*(\d+)/);
         const host  = scoreMatch ? parseInt(scoreMatch[1], 10) : 0;
         const guest = scoreMatch ? parseInt(scoreMatch[2], 10) : 0;
 
@@ -939,6 +995,7 @@ export class TikTokEventEmitter {
             log.info('TIKTOK BATTLE FINISHED (via status)', { battleId: data.battleId });
             this._battleState = null;
             this._lastBattleScores = null;
+            this._battleAnchorSides.clear();
         }
     }
 
@@ -949,6 +1006,11 @@ export class TikTokEventEmitter {
 
         log.info('TIKTOK BATTLE PUNISHMENT PHASE END');
         this._battleState = null;
+        this._battleAnchorSides.clear();
+        if (comment.meta) {
+            const room = this._roomTag();
+            if (room) comment.meta.room = room;
+        }
         this.callbacks.onComment(comment);
     }
 

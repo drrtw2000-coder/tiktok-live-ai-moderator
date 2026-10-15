@@ -38,14 +38,14 @@ if not exist ".env" (
 
 REM -- read PORT from .env (default 3002) --------------------------------------
 set "PORT=3002"
-for /f "usebackq tokens=1,* delims==" %%a in (".env") do (
+for /f "usebackq eol=# tokens=1,* delims==" %%a in (".env") do (
   if /i "%%a"=="PORT" set "PORT=%%b"
 )
 set "PORT=%PORT: =%"
 if not defined PORT set "PORT=3002"
 
 REM -- warn when token auth is off ---------------------------------------------
-for /f "usebackq tokens=1,* delims==" %%a in (".env") do (
+for /f "usebackq eol=# tokens=1,* delims==" %%a in (".env") do (
   if /i "%%a"=="API_TOKEN" if "%%b"=="" echo [i] API_TOKEN empty in .env - token auth is OFF.
   if /i "%%a"=="API_TOKEN" if /i "%%b"=="changeme-use-same-value-in-bridge-env" echo [i] API_TOKEN is still the template placeholder - change it for production.
 )
@@ -69,7 +69,7 @@ if defined WANT_DEMO start "" /min cmd /c "timeout /t 4 /nobreak >nul & %PY% dem
 
 echo.
 echo ============================================================
-echo   AI Moderator - http://127.0.0.1:%PORT%
+echo   AI Moderator - http://127.0.0.1:%PORT%  (local debug; use a.bat for remote)
 echo     overlay      (Studio "Link" / OBS Browser Source)  /overlay/chat
 echo     mod console  (second screen only)                  /overlay/mod
 echo     demo chat:   run.bat demo

@@ -65,10 +65,12 @@ TikTok LIVE → v3 bridge → POST :3002/api/comment → verdict
   Returns `{ok, allowed, verdict:{allowed,verdict,score,source,severity}}`.
 - `GET /events?channel=chat|mod|all` — SSE stream. `chat` = clean only
   (overlay), `mod`/`all` = everything (console). Replays last N on connect.
-- `GET /api/flags?limit=50&severity=red` — recent flags from SQLite.
+- `GET /api/flags?limit=50` — recent red flags from SQLite (newest first,
+  `limit` clamped 1-200; `MOD_CONSOLE=0` disables with 404).
 - `GET /api/stats` / `GET /healthz`.
-- `POST /api/test` — localhost-only inject `{user,text,eventType?,meta?}`
-  for quick manual tests without auth.
+- `POST /api/test` — same `API_TOKEN` gate as `/api/comment` (not localhost-only:
+  tunnels launder loopback, so the token — not the IP — authorizes).
+  Body `{user,text,eventType?,meta?}` for quick manual tests.
 
 ## Test checklist
 

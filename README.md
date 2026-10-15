@@ -388,18 +388,24 @@ billing, bot account, ban automation.
 
 ## Run it (single entry: `a.bat`)
 
-One window, one command — starts moderator + LIVE bridge, prints the Studio
-source link. From the repo root (PowerShell needs `.\`):
+One window, one command — starts moderator + tunnel + LIVE bridge, prints the
+remote overlay link (also saved to `public-link.txt`). Tunnel is ON by
+default; local runs are the debug exception. From the repo root (PowerShell
+needs `.\`):
 
 ```powershell
-.\a.bat @ahappyspell                 # live: TikTok -> moderator :3002 -> TTLive
-.\a.bat @ahappyspell --wait --tunnel # not live yet / need a public link
-.\a.bat --demo                       # offline: scripted chat, no LIVE needed
+.\a.bat @ahappyspell          # live + public link (remote use)
+.\a.bat @ahappyspell --wait   # not live yet: ENTER when live
+.\a.bat @ahappyspell notunnel # local debug: no tunnel, no public link
+.\a.bat --demo                # offline: scripted chat, no LIVE needed
 ```
 
-* Chat source (Studio Link / OBS): `http://127.0.0.1:3002/overlay/chat`
-  (or `<tunnel-url>/overlay/chat` with `--tunnel`)
-* Mod console (never on stream): `/overlay/mod?token=MOD_TOKEN`
+* Gifts overlay, remote: `<tunnel-url>/overlay/chat` (printed + in `public-link.txt`)
+* Gifts overlay, local: `http://127.0.0.1:3002/overlay/chat`
+* Overlay control (never on stream): `/overlay/admin?token=MOD_TOKEN` — toggles,
+  timings and Studio link builder, pushed live to connected overlays.
+  (`MOD_CONSOLE=1` re-enables the retired comment-mod console.)
+* One bridge per streamer: a second window for the same `@user` warns and asks to take over.
 * `py moderator/server.py --check` = startup self-test (env + pipeline).
 
 ---

@@ -5,6 +5,34 @@ import type { GiftStreak } from './tiktok-types';
 
 // ─── Public Interfaces ───────────────────────────────────────────────
 
+/**
+ * Multiplier/crit from a gift's matchInfo (PK 2x/3x moments, crit strikes).
+ * Pure passthrough: returns {} when the SDK sent nothing. multiplierValue
+ * '3' → '3x'; bare CRITICAL_STRIKE type → 'CRIT'. Never throws.
+ */
+export function matchMult(event: RawGiftEvent): { giftMult?: string; giftCrit?: boolean } {
+    try {
+        const mi = event.matchInfo;
+        if (!mi) return {};
+        const out: { giftMult?: string; giftCrit?: boolean } = {};
+        const mv = (mi.multiplierValue || '').trim();
+        const mt = mi.multiplierType ?? 0;
+        if (mv && mv !== '1' && mv.toLowerCase() !== '1x') {
+            out.giftMult = /x$/i.test(mv) ? mv : `${mv}x`;
+        } else if (mt === 1) {
+            out.giftMult = 'CRIT';
+        } else if (mt === 2) {
+            out.giftMult = 'TOP2';
+        } else if (mt === 3) {
+            out.giftMult = 'TOP3';
+        }
+        if ((mi.critical && mi.critical !== '0') || mt === 1) out.giftCrit = true;
+        return out;
+    } catch {
+        return {};
+    }
+}
+
 export interface RawGiftEvent {
     giftId:              number;
     giftType?:           number;
@@ -28,6 +56,18 @@ export interface RawGiftEvent {
         name?:         string;
         diamondCount?: number;
     };
+    /**
+     * PK multiplier moment, passed through untouched when the SDK sends it.
+     * The connector's simplified gift may or may not carry it at runtime —
+     * everything downstream treats it as optional (never crashes when
+     * absent). Shape mirrors WebcastGiftMessage_MatchInfo.
+     */
+    matchInfo?: {
+        critical?:        string;
+        multiplierType?:  number;
+        multiplierValue?: string;
+        effectCardInUse?: boolean;
+    };
 }
 
 export interface ResolvedGift {
@@ -46,6 +86,10 @@ export interface ResolvedGift {
     extendedGiftInfo?: Record<string, unknown>;
     description:       string;
     streakDurationMs:  number;
+    /** Multiplier badge from matchInfo, if any (e.g. "3x", "CRIT"). */
+    giftMult?:         string;
+    /** Gift landed on a crit/multiplier moment. */
+    giftCrit?:         boolean;
 }
 
 export interface GiftAggregatorStats {
@@ -291,6 +335,7 @@ export class GiftAggregator {
             extendedGiftInfo: event.giftDetails ?? event.extendedGiftInfo,
             description:      `sent ${giftName}${repeatCount > 1 ? ` x${repeatCount}` : ''}`,
             streakDurationMs: 0,
+            ...matchMult(event),
         };
 
         this._nonStreakTotal++;
@@ -332,6 +377,11 @@ export class GiftAggregator {
             existing.repeatCount   = Math.max(existing.repeatCount, event.repeatCount);
             existing.lastUpdatedAt = now;
             existing.rawUser       = event.user;
+            // Track multiplier moments across the streak: latest badge wins,
+            // crit latches (a crit happened — worth celebrating at resolve).
+            const mm = matchMult(event);
+            if (mm.giftMult) existing.lastMult = mm.giftMult;
+            if (mm.giftCrit) existing.lastCrit = true;
         } else {
             // ── DO NOT clear tombstones on new streak start. ──
             //
@@ -351,6 +401,7 @@ export class GiftAggregator {
             const giftName = this._resolveGiftName(event);
             const diamonds = this._resolveDiamondCount(event);
 
+            const streakMm = matchMult(event);
             const streak: GiftStreak = {
                 key,
                 userId:           event.user.userId,
@@ -366,6 +417,8 @@ export class GiftAggregator {
                 lastUpdatedAt:    now,
                 rawUser:          event.user,
                 extendedGiftInfo: event.giftDetails ?? event.extendedGiftInfo,
+                lastMult:         streakMm.giftMult,
+                lastCrit:         streakMm.giftCrit,
             };
 
             this.streaks.set(key, streak);
@@ -406,6 +459,9 @@ export class GiftAggregator {
         const now              = Date.now();
         const totalDiamonds    = streak.diamondCount * streak.repeatCount;
         const streakDurationMs = now - streak.firstSeenAt;
+        // Multiplier moments: latest event wins, else the streak's latched
+        // badge (a 3x mid-streak is still worth showing at resolve).
+        const latestMm = latestEvent ? matchMult(latestEvent) : {};
 
         const resolved: ResolvedGift = {
             userId:           streak.userId,
@@ -423,6 +479,8 @@ export class GiftAggregator {
             extendedGiftInfo: streak.extendedGiftInfo,
             description:      `sent ${streak.giftName} x${streak.repeatCount}`,
             streakDurationMs,
+            giftMult:         latestMm.giftMult ?? streak.lastMult,
+            giftCrit:         latestMm.giftCrit || streak.lastCrit,
         };
 
         // Plant tombstone BEFORE deleting streak.
@@ -553,6 +611,7 @@ export class GiftAggregator {
             extendedGiftInfo: event.giftDetails ?? event.extendedGiftInfo,
             description:      `sent ${giftName}${repeatCount > 1 ? ` x${repeatCount}` : ''}`,
             streakDurationMs: 0,
+            ...matchMult(event),
         };
 
         // Tombstone this emission so a subsequent duplicate is caught
@@ -602,6 +661,7 @@ export class GiftAggregator {
             extendedGiftInfo: event.giftDetails ?? event.extendedGiftInfo,
             description:      `sent ${giftName} x${delta} (delta; full streak was x${fullCount})`,
             streakDurationMs: 0,
+            ...matchMult(event),
         };
 
         // Update tombstone stack to reflect the authoritative full count

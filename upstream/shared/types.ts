@@ -93,10 +93,68 @@ export interface CommentMeta {
     battleHostScore?: number;
     /** Guest team score. Set by normalizeBattleUpdate. */
     battleGuestScore?: number;
+    /** Host participant nickname. Set by battle normalizers. */
+    battleHost?: string;
+    /** Guest participant nickname. Set by battle normalizers. */
+    battleGuest?: string;
+    /** Host participant user ID. Set by battle normalizers. */
+    battleHostId?: string;
+    /** Guest participant user ID. Set by battle normalizers. */
+    battleGuestId?: string;
+    /** Host @uniqueId (displayId). For home-side detection. */
+    battleHostDisplayId?: string;
+    /** Guest @uniqueId (displayId). For home-side detection. */
+    battleGuestDisplayId?: string;
+    /**
+     * Which side is the watched streamer: 'host' | 'guest'.
+     * Set by the emitter (it knows config.username). Overlay renders that
+     * side LEFT, like TikTok. Absent when undeterminable (mid-battle join
+     * without a start frame) — overlay falls back to ?home= then host-left.
+     */
+    battleHomeSide?: string;
+    /** Base battle duration in seconds (BattleSetting). */
+    battleDurationS?: number;
+    /** Epoch ms when the battle ends (BattleSetting.endTimeMs). */
+    battleEndsAt?: number;
+    /** Epoch ms when the battle started (BattleSetting.startTimeMs). */
+    battleStartMs?: number;
+    /** Overtime seconds (BattleSetting.extraDurationSecond). */
+    battleExtraS?: number;
+    /** Crit/multiplier landed on this scoring play (armies frame). */
+    battleCrit?: boolean;
+    /** User whose gift triggered this armies frame. */
+    battleFromUser?: string;
+    /** Gift ID behind this armies frame. */
+    battleGiftId?: string;
+    /** Gift count behind this armies frame. */
+    battleGiftCount?: number;
+    /** Punish reason: 0 TIME_UP, 1 CUT_SHORT (or raw number). */
+    battleEndReason?: string;
+    /**
+     * Gift multiplier moment from the gift's matchInfo (e.g. "2x", "3x",
+     * "CRIT"). Absent when TikTok sends none — the connector only forwards
+     * what the protobuf carries; there is no separate powerup event.
+     */
+    giftMult?: string;
+    /** Gift landed on a critical/multiplier moment. */
+    giftCrit?: boolean;
+    /**
+     * Watched room (@uniqueId, lowercased) this battle frame came from.
+     * The moderator outlives bridge restarts/retargets and mixes rooms in
+     * history — the overlay treats a room change like a new battle so a
+     * stale bar from another streamer's room can never linger.
+     */
+    room?: string;
+    /**
+     * How battle participants were identified: 'teamUsers' (reliable) |
+     * 'positional' (map order, 50/50 without team data) | 'battleUsers'.
+     * Transparency for "host name wrong" reports — check this first.
+     */
+    identitySource?: string;
     /**
      * Diagnostic: which data source provided the battle scores.
-     * Values: 'teamArmies', 'battleItems-mapped', 'battleItems-positional',
-     *         'battleItems-single', 'none'.
+     * Values: 'teamArmies', 'battleItems-mapped', 'battleItems-pinned',
+     *         'battleItems-positional', 'battleItems-single', 'none'.
      * Consumers should NOT depend on this — it exists for debugging.
      */
     scoreSource?: string;
@@ -106,6 +164,10 @@ export interface CommentMeta {
     likeCount?: number;
     /** Cumulative total likes for the stream. */
     totalLikeCount?: number;
+
+    // ── Live status ────────────────────────────────────────────
+    /** Synthetic bridge event: 'live' | 'waiting' | 'connecting'. */
+    liveState?: string;
 
     // ── Social details ───────────────────────────────────────────
     /** Social action type string from SDK. */

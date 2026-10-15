@@ -68,6 +68,10 @@ export interface GiftStreak {
     rawUser: Record<string, unknown>;
     /** Extended gift info (if available). */
     extendedGiftInfo?: Record<string, unknown>;
+    /** Latest multiplier badge seen on this streak (transient PK moments). */
+    lastMult?: string;
+    /** A crit landed during this streak (latches — hype, not state). */
+    lastCrit?: boolean;
 }
 
 // ═════════════════════════════════════════════════════════════════════════════

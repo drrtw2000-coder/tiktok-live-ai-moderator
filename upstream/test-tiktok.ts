@@ -204,7 +204,7 @@ function displayStats(capture: TikTokCapture): void {
 // ═════════════════════════════════════════════════════════════════════════════
 
 async function main(): Promise<void> {
-    const username = process.argv[2];
+    const username = (process.argv[2] || "").replace(/^"|"$/g, "").trim();
     const apiKey   = process.argv[3] || process.env.TIKTOK_EULER_API_KEY || '';
 
     if (!username) {
