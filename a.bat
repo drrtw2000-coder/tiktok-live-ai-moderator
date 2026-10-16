@@ -65,11 +65,19 @@ if errorlevel 1 (
 
 if not exist "moderator\.env" (
   copy /y "moderator\.env.example" "moderator\.env" >nul
-  echo [i] Created moderator\.env - set API_TOKEN / MOD_TOKEN.
+  echo [i] Created moderator\.env - tokens are generated below.
 )
 if not exist "upstream\.env" (
   copy /y "upstream\.env.example" "upstream\.env" >nul
-  echo [i] Created upstream\.env - set API_TOKEN (= moderator's^) + TIKTOK_EULER_API_KEY.
+  echo [i] Created upstream\.env - set TIKTOK_EULER_API_KEY. Tokens are generated below.
+)
+REM -- N1: replace the repo's public placeholder tokens with real secrets ------
+REM    Idempotent: only placeholder/short values change; keeps the bridge in sync.
+%PY% "moderator\init_env.py"
+if errorlevel 1 (
+  echo [ERROR] Could not set API_TOKEN / MOD_TOKEN - see the message above.
+  pause
+  exit /b 1
 )
 if not exist "upstream\node_modules" (
   echo [i] Installing upstream dependencies (one-time, ~1 min^)...
@@ -210,16 +218,16 @@ echo ============================================================
 echo   AI Moderator - http://127.0.0.1:%PORT%
 if defined TUNNEL_URL (
   echo   Public gift overlay: !TUNNEL_URL!/overlay/chat
-  echo   Overlay control (never on stream^): !TUNNEL_URL!/overlay/admin?token=MOD_TOKEN ^(see moderator/.env^)
+  echo   Overlay control (never on stream^): !TUNNEL_URL!/overlay/login ^(MOD_TOKEN once, session cookie after^)
   goto links_done
 )
 if defined WANT_TUNNEL (
   echo   Public gift overlay: copy the https URL from the tunnel window + /overlay/chat
-  echo   Overlay control (never on stream^): same https URL + /overlay/admin?token=MOD_TOKEN ^(see moderator/.env^)
+  echo   Overlay control (never on stream^): same https URL + /overlay/login ^(MOD_TOKEN once, session cookie after^)
   goto links_done
 )
   echo   Local gift overlay (Studio Link / OBS^):  http://127.0.0.1:%PORT%/overlay/chat
-  echo   Overlay control:                          http://127.0.0.1:%PORT%/overlay/admin?token=MOD_TOKEN ^(see moderator/.env^)
+  echo   Overlay control:                          http://127.0.0.1:%PORT%/overlay/login ^(MOD_TOKEN once, session cookie after^)
 :links_done
 echo   Bridge: %USER% -^> moderator :%PORT% -^> TTLive
 echo   Ctrl+C stops. Keep this window open while you stream.

@@ -61,7 +61,7 @@ TikTok LIVE → v3 bridge → POST :3002/api/comment → verdict
 ## API
 
 - `POST /api/comment` — accepts canonical `TikTokComment`
-  `{id,userId,username,text,timestamp,meta}`. Header `x-api-token` (or `?token=`).
+  `{id,userId,username,text,timestamp,meta}`. Header `x-api-token` (never in URL).
   Returns `{ok, allowed, verdict:{allowed,verdict,score,source,severity}}`.
 - `GET /events?channel=chat|mod|all` — SSE stream. `chat` = clean only
   (overlay), `mod`/`all` = everything (console). Replays last N on connect.

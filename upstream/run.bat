@@ -49,6 +49,21 @@ if not exist ".env" (
   echo [i] Created upstream\.env - set API_TOKEN + TIKTOK_EULER_API_KEY.
 )
 
+REM -- N1: the shipped placeholder is a PUBLIC credential ---------------------
+findstr /b /c:"API_TOKEN=changeme" /c:"TTLIVE_API_TOKEN=changeme" ".env" >nul 2>nul
+if not errorlevel 1 (
+  echo [WARN] upstream\.env still holds the repo's public placeholder token.
+  echo        Run a.bat once, or:  py ..\moderator\init_env.py
+)
+
+REM -- 1A-2 preflight: token conflicts stop the launch, not the bridge -------
+py ..\moderator\init_env.py
+if errorlevel 1 (
+  echo [ERROR] init_env.py reports a token conflict - resolve it, then retry.
+  pause
+  exit /b 1
+)
+
 REM -- one-time deps ------------------------------------------------------------
 if not exist "node_modules" (
   echo [i] Installing dependencies ^(one-time, ~1 min^)...

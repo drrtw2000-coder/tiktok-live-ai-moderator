@@ -20,6 +20,7 @@ import hmac
 import json
 import os
 import queue
+import secrets
 import sqlite3
 import threading
 import time
@@ -91,6 +92,12 @@ REQUIRE_AUTH = (os.getenv("REQUIRE_AUTH", "1") or "1").strip() not in ("0", "fal
 # same box that sanitizes XFF.
 TRUST_PROXY = (os.getenv("TRUST_PROXY", "0") or "0").strip().lower() \
     not in ("0", "false", "no", "off", "")
+# ALLOW_REMOTE: 1 to expose beyond loopback (tunnel or LAN). Default 0.
+ALLOW_REMOTE = (os.getenv("ALLOW_REMOTE", "0") or "0").strip().lower() \
+    not in ("0", "false", "no", "off", "")
+# LISTEN_HOST: explicit bind wins; else loopback unless remote is allowed (1C-1).
+_LISTEN_ENV = (os.getenv("LISTEN_HOST", "") or "").strip()
+LISTEN_HOST = _LISTEN_ENV or ("0.0.0.0" if ALLOW_REMOTE else "127.0.0.1")
 PUBLIC_BASE_URL = (os.getenv("PUBLIC_BASE_URL", "") or "").rstrip("/")
 # MOD_CONSOLE kill-switch: the comment-moderation console (/overlay/mod,
 # /api/flags, mod/all feeds) is off unless explicitly enabled. The overlay
@@ -235,8 +242,19 @@ def _directly_exposed(ip: str) -> bool:
     return not _is_loopback(ip)
 
 
+def _weak_token(tok: str) -> bool:
+    """N1: empty, short (< 16) or a repo-shipped `changeme...` placeholder.
+
+    Both .env.example files ship the SAME placeholder for every token, so
+    on any install that kept it the "secret" is printed in a public repo.
+    A weak expected token must authenticate NOBODY (fail closed), not
+    everyone who reads the repo. init_env.py replaces weak values."""
+    t = (tok or "").strip()
+    return (not t) or t.lower().startswith("changeme") or len(t) < 16
+
+
 def _check_token(provided: str, expected: str) -> bool:
-    if not expected:
+    if _weak_token(expected):
         return False
     return hmac.compare_digest(provided or "", expected)
 
@@ -276,6 +294,42 @@ def _rate_limited(ip: str) -> bool:
                       if not v or now - v[-1] > RATE_WINDOW * 10][:1000]:
                 _rl.pop(k, None)
         return len(dq) > RATE_MAX
+
+
+# --- operator console sessions (1B-2: browser auth without URL credentials) ---
+# Opaque random ids, server-side issuance + expiry only. TTL 12h; swept on issue.
+# Cookies are HttpOnly + SameSite=Lax (local HTTP: no Secure flag by design).
+_sessions: dict[str, float] = {}
+_sessions_lock = threading.Lock()
+SESSION_TTL_SECONDS = 12 * 3600
+
+
+def _session_sweep(now=None):
+    now = time.monotonic() if now is None else now
+    with _sessions_lock:
+        for sid in [s for s, t in _sessions.items() if now - t > SESSION_TTL_SECONDS]:
+            _sessions.pop(sid, None)
+
+
+def _session_issue():
+    _session_sweep()
+    sid = secrets.token_hex(16)
+    with _sessions_lock:
+        _sessions[sid] = time.monotonic()
+    return sid
+
+
+def _session_valid(sid):
+    if not sid or not isinstance(sid, str):
+        return False
+    with _sessions_lock:
+        t = _sessions.get(sid)
+        if t is None:
+            return False
+        if time.monotonic() - t > SESSION_TTL_SECONDS:
+            _sessions.pop(sid, None)
+            return False
+    return True
 
 
 # --- polling gets its own generous budget (read-only overlay refresh) ---
@@ -664,17 +718,26 @@ class Handler(BaseHTTPRequestHandler):
         return body, "ok"
 
     def _provided_token(self):
-        """Token from header (preferred) or ?token= (for EventSource/img).
+        """Token from request headers only — never the URL.
 
-        Studio Link sources and EventSource cannot set headers, so the mod
-        console passes ?token= in the URL. Header stays preferred for
-        bridge/server-to-server calls."""
-        from urllib.parse import urlparse, parse_qs
+        1B-2: the `?token=` query fallback is removed: URLs land in logs,
+        history, and Referer headers. Header `x-api-token` / `x-mod-token`
+        serves bridge/server-to-server calls; browser surfaces authenticate
+        once via POST /api/mod-session (or the /overlay/login form) and ride
+        the HttpOnly `mod_session` cookie after that (works for pages, fetch,
+        and EventSource alike — see _has_session)."""
         tok = self.headers.get("x-api-token") or self.headers.get("x-mod-token")
-        if tok:
-            return tok
-        q = parse_qs(urlparse(self.path).query)
-        return q.get("token", [""])[0]
+        return tok or ""
+
+    def _has_session(self):
+        """True iff the request carries a live mod_session cookie (1B-2)."""
+        try:
+            from http.cookies import SimpleCookie
+            jar = SimpleCookie(self.headers.get("Cookie") or "")
+            sid = jar["mod_session"].value if "mod_session" in jar else ""
+        except Exception:
+            return False
+        return _session_valid(sid)
 
     def _check_ingest(self):
         """Gate for /api/comment + /api/test. Returns token or None (401)."""
@@ -711,9 +774,12 @@ class Handler(BaseHTTPRequestHandler):
         if not REQUIRE_AUTH:
             return ""
         tok = self._provided_token()
-        if MOD_TOKEN and _check_token(tok, MOD_TOKEN):
+        mod_set = not _weak_token(MOD_TOKEN)  # placeholder == unset (N1)
+        if mod_set and _check_token(tok, MOD_TOKEN):
             return tok
-        if not MOD_TOKEN:
+        if self._has_session():
+            return ""  # browser console, authenticated at login; cookie-bound
+        if not mod_set:
             tcp = (self.client_address[0] if self.client_address else "") or ""
             has_xff = bool((self.headers.get("X-Forwarded-For") or "").strip())
             if _is_loopback(tcp) and not has_xff:
@@ -721,10 +787,8 @@ class Handler(BaseHTTPRequestHandler):
             self._json(503, {"ok": False,
                              "error": "mod console locked: set MOD_TOKEN in .env"})
             return False  # already answered
-        # MOD_TOKEN is set but caller failed it: allow API_TOKEN as fallback
-        # so one secret still works for single-user setups.
-        if _check_token(tok, API_TOKEN):
-            return tok
+        # MOD_TOKEN is set but caller failed it: deny. No API_TOKEN fallback
+        # (1B-1): one secret must never authorize another secret's routes.
         _auth_fail(self.path.split("?")[0], _client_ip(self))
         return None
 
@@ -819,7 +883,7 @@ class Handler(BaseHTTPRequestHandler):
                          "battle_buffered": battle_n,
                          "sse_chat": sse_c,
                          "sse_mod": sse_m})
-            return self._json(200, snap)
+            return self._mod_json(200, snap)
         if path == "/api/flags":
             if not MOD_CONSOLE:
                 return self._json(404, {"ok": False,
@@ -840,7 +904,7 @@ class Handler(BaseHTTPRequestHandler):
                     (limit,)).fetchall()
             keys = ("tt_id", "user_id", "username", "text", "verdict",
                     "score", "source", "event_type", "ts")
-            return self._json(200, {"flags": [dict(zip(keys, r)) for r in rows]})
+            return self._mod_json(200, {"flags": [dict(zip(keys, r)) for r in rows]})
         if path == "/api/battles":
             if not MOD_CONSOLE:
                 return self._json(404, {"ok": False,
@@ -852,7 +916,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(401, {"ok": False, "error": "bad mod token"})
             with history_lock:
                 items = list(battle_history)
-            return self._json(200, {"ok": True, "battles": items[-20:]})
+            return self._mod_json(200, {"ok": True, "battles": items[-20:]})
         if path == "/events":
             channel = (q.get("channel", ["all"])[0] or "all").lower()
             if channel in ("mod", "all"):
@@ -873,13 +937,21 @@ class Handler(BaseHTTPRequestHandler):
             if gate is False:
                 return  # 503 already sent
             if gate is None:
-                return self._send(401,
-                                  "<h1>admin locked</h1>"
-                                  "<p>Append <code>?token=YOUR_MOD_TOKEN</code> "
-                                  "to the URL.</p>",
-                                  "text/html; charset=utf-8",
-                                  frame_deny=True)
+                return self._send(302, "", "text/html",
+                                  {"Location": "/overlay/login"})
             return self._file("overlay_admin.html", "text/html; charset=utf-8",
+                              frame_deny=True,
+                              extra={"Cache-Control": "no-store"})
+        if path == "/overlay/login":
+            return self._send(200,
+                              "<h1>mod console login</h1>"
+                              '<form method="POST" action="/overlay/login">'
+                              '<input type="password" name="token" autocomplete="off">'
+                              "<button>log in</button></form>"
+                              "<p>One login per browser, 12 h session cookie. "
+                              "Nothing is stored in the URL.</p>",
+                              "text/html; charset=utf-8",
+                              {"Cache-Control": "no-store"},
                               frame_deny=True)
         if path == "/overlay/mod":
             if not MOD_CONSOLE:
@@ -893,17 +965,11 @@ class Handler(BaseHTTPRequestHandler):
             if gate is False:
                 return  # 503 already sent
             if gate is None:
-                # Browser-friendly: EventSource/Link can't set headers, so a
-                # missing token gets a 401 page (not bare JSON) with a hint.
-                return self._send(401,
-                                  "<h1>mod console locked</h1>"
-                                  "<p>Append <code>?token=YOUR_MOD_TOKEN</code> "
-                                  "to the URL. Never use this page as a stream "
-                                  "source.</p>",
-                                  "text/html; charset=utf-8",
-                                  frame_deny=True)
+                return self._send(302, "", "text/html",
+                                  {"Location": "/overlay/login"})
             return self._file("overlay_mod.html", "text/html; charset=utf-8",
-                              frame_deny=True)
+                              frame_deny=True,
+                              extra={"Cache-Control": "no-store"})
         if path == "/media" or path.startswith("/media/"):
             # Serve local test clips from moderator/media/ for
             # ?video=/media/sample.mp4 . Range-aware (206) so browsers can
@@ -976,21 +1042,25 @@ class Handler(BaseHTTPRequestHandler):
                 "<h1>AI Moderator</h1><ul>"
                 "<li><a href='/overlay/chat'>/overlay/chat</a> "
                 "(TikTok LIVE Studio Link source — public)</li>"
-                "<li>/overlay/mod (mod console — needs ?token=MOD_TOKEN, "
-                "never on stream)</li>"
+                "<li>/overlay/mod (mod console — log in at /overlay/login, "
+                "never on stream; no token in URLs)</li>"
                 "<li>/api/stats + /api/flags (need mod token) "
                 "<a href='/healthz'>/healthz</a></li></ul>"),
                 "text/html; charset=utf-8")
         return self._json(404, {"ok": False, "error": "not found"})
 
-    def _file(self, name, ctype, frame_deny=False):
+    def _file(self, name, ctype, frame_deny=False, extra=None):
         try:
             with open(os.path.join(HERE, name), "rb") as f:
                 self._send(200, f.read(), ctype,
-                           {"Cache-Control": "no-cache"},
+                           dict({"Cache-Control": "no-cache"}, **(extra or {})),
                            frame_deny=frame_deny)
         except FileNotFoundError:
             self._json(404, {"ok": False, "error": f"{name} missing"})
+
+    def _mod_json(self, code, obj):
+        """Mod-gated JSON responses: never cacheable (1B-2)."""
+        return self._json(code, obj, extra={"Cache-Control": "no-store"})
 
     def _sse(self, channel):
         if channel not in ("chat", "mod", "all"):
@@ -1067,6 +1137,33 @@ class Handler(BaseHTTPRequestHandler):
             self.close_connection = True
             return self._json(413, {"ok": False, "error": "body too large"})
 
+        if path == "/api/mod-session":
+            body = self._read_json(4096) or {}
+            tok = body.get("token", "") if isinstance(body, dict) else ""
+            if tok and _check_token(tok, MOD_TOKEN):
+                sid = _session_issue()
+                return self._json(200, {"ok": True, "expires_in": SESSION_TTL_SECONDS},
+                                  extra={"Set-Cookie": f"mod_session={sid}; HttpOnly; Path=/; SameSite=Lax; Max-Age={SESSION_TTL_SECONDS}"})
+            _auth_fail("/api/mod-session", _client_ip(self))
+            return self._json(401, {"ok": False, "error": "bad mod token"})
+        if path == "/overlay/login":
+            try:
+                ln = min(int(self.headers.get("Content-Length", "0") or 0), 4096)
+                raw = self.rfile.read(ln).decode("utf-8", "replace") if ln > 0 else ""
+            except Exception:
+                raw = ""
+            from urllib.parse import parse_qs
+            tok = (parse_qs(raw).get("token", [""])[0] or "").strip()
+            if tok and _check_token(tok, MOD_TOKEN):
+                sid = _session_issue()
+                return self._send(302, "", "text/html",
+                                  {"Location": "/overlay/mod",
+                                   "Set-Cookie": f"mod_session={sid}; HttpOnly; Path=/; SameSite=Lax; Max-Age={SESSION_TTL_SECONDS}"})
+            return self._send(401,
+                              "<h1>bad token</h1><p><a href='/overlay/login'>retry</a></p>",
+                              "text/html; charset=utf-8",
+                              {"Cache-Control": "no-store"},
+                              frame_deny=True)
         if path == "/api/overlay-config":
             gate = self._check_mod()
             if gate is False:
@@ -1172,13 +1269,16 @@ def self_check() -> int:
     Old code called process_comment() and polluted prod state on every
     --check run. 0 = pass."""
     fails = []
-    weak = API_TOKEN in ("", "changeme-use-same-value-in-bridge-env",
-                         "changeme-generate-with-secrets-token_hex-32") or \
-        (API_TOKEN and len(API_TOKEN) < 16)
-    if REQUIRE_AUTH and (not API_TOKEN or weak):
-        fails.append("API_TOKEN missing/weak (POST /api/comment will 401 everything)")
-    if REQUIRE_AUTH and not MOD_TOKEN:
-        fails.append("MOD_TOKEN unset (tunneled /overlay/mod + /api/flags refuse all)")
+    if REQUIRE_AUTH and _weak_token(API_TOKEN):
+        fails.append("API_TOKEN missing/placeholder/short (POST /api/comment "
+                     "will 401 everything; run init_env.py)")
+    if REQUIRE_AUTH and _weak_token(MOD_TOKEN):
+        fails.append("MOD_TOKEN missing/placeholder/short (tunneled "
+                     "/overlay/mod + /api/flags refuse all; run init_env.py)")
+    if REQUIRE_AUTH and not _weak_token(API_TOKEN) and not _weak_token(MOD_TOKEN) \
+            and API_TOKEN == MOD_TOKEN:
+        fails.append("API_TOKEN == MOD_TOKEN: one secret authorizes both planes; "
+                     "regenerate MOD_TOKEN via init_env.py (1A-1)")
     cases = [
         ({"id": "chk-1", "userId": "u", "username": "u", "text": "hello!",
           "timestamp": 1, "meta": {"eventType": "comment"}}, True, "clean allowed"),
@@ -1250,7 +1350,7 @@ def main():
     if "--check" in sys.argv:
         raise SystemExit(self_check())
     try:
-        srv = SingleInstanceServer(("0.0.0.0", PORT), Handler)
+        srv = SingleInstanceServer((LISTEN_HOST, PORT), Handler)
     except OSError as e:
         log(f"!! :{PORT} in use (another moderator running?) — "
             "close the old 'AI Moderator' window. "
@@ -1262,20 +1362,24 @@ def main():
             f.write(str(os.getpid()))
     except OSError:
         pass
-    weak = API_TOKEN in ("", "changeme-use-same-value-in-bridge-env") or \
-        (API_TOKEN and len(API_TOKEN) < 16)
-    if REQUIRE_AUTH and (not API_TOKEN or weak):
-        log("!! API_TOKEN missing/weak: POST /api/comment + /api/test will 401 "
-            "everything. Set a 32+ char secret in .env (same value in bridge).")
-    if REQUIRE_AUTH and not MOD_TOKEN:
-        log("!! MOD_TOKEN unset: /overlay/mod + /api/flags + /api/stats refuse "
+    if REQUIRE_AUTH and _weak_token(API_TOKEN):
+        log("!! API_TOKEN missing/placeholder/short: POST /api/comment + "
+            "/api/test will 401 everything. Run init_env.py (a.bat does) or "
+            "set a 32+ char secret in .env (same value in bridge).")
+    if REQUIRE_AUTH and _weak_token(MOD_TOKEN):
+        log("!! MOD_TOKEN missing/placeholder/short: /overlay/mod + /api/flags + /api/stats refuse "
             "all TUNNELED/proxied requests (503) until set. Localhost dev "
             "still works.")
+    if REQUIRE_AUTH and not _weak_token(API_TOKEN) and not _weak_token(MOD_TOKEN) \
+            and API_TOKEN == MOD_TOKEN:
+        log("!! API_TOKEN == MOD_TOKEN: one secret authorizes both planes. "
+            "Regenerate MOD_TOKEN via init_env.py (1A-1).")
     log(f"AI moderator on :{PORT} -> upstream {UPSTREAM or '(forwarding OFF)'} "
         f"(auth {'on' if REQUIRE_AUTH else 'OFF (REQUIRE_AUTH=0)'}, "
         f"api={_mask(API_TOKEN)}, mod={_mask(MOD_TOKEN)})")
     log("overlay/chat PUBLIC for Studio Link | "
-        "overlay/admin needs ?token=MOD_TOKEN" +
+        "overlay/admin + overlay/mod need a session (open /overlay/login in a "
+        "browser, or send x-mod-token header)" +
         ("" if MOD_CONSOLE else " | mod console OFF (MOD_CONSOLE=0)"))
     if not MOD_CONSOLE:
         log("mod console disabled: /overlay/mod + /api/flags + mod/all feeds 404")
@@ -1288,10 +1392,28 @@ def main():
         pass
     if _tunnel_url:
         log(f"public: {_tunnel_url}/overlay/chat (Studio) | "
-            f"{_tunnel_url}/overlay/admin?token=… (control)")
+            f"{_tunnel_url}/overlay/admin (control, session login required)")
     elif PUBLIC_BASE_URL:
         log(f"public: {PUBLIC_BASE_URL}/overlay/chat (Studio) | "
-            f"{PUBLIC_BASE_URL}/overlay/admin?token=… (control)")
+            f"{PUBLIC_BASE_URL}/overlay/admin (control, session login required)")
+    # 1A-3 fail-closed startup: remote exposure (tunnel file or ALLOW_REMOTE)
+    # with weak credentials, an equality pair, or auth off entirely refuses
+    # to serve. Pure-localhost dev (no tunnel, ALLOW_REMOTE=0) keeps the
+    # warn-and-continue behavior above.
+    exposed = bool(_tunnel_url) or ALLOW_REMOTE
+    if exposed and REQUIRE_AUTH and (_weak_token(API_TOKEN) or _weak_token(MOD_TOKEN)):
+        log("!! REFUSING to serve: remote exposure with weak credentials. "
+            "Run init_env.py, then restart.")
+        raise SystemExit(2)
+    if exposed and REQUIRE_AUTH and not _weak_token(API_TOKEN) \
+            and not _weak_token(MOD_TOKEN) and API_TOKEN == MOD_TOKEN:
+        log("!! REFUSING to serve: API_TOKEN == MOD_TOKEN with remote exposure. "
+            "Regenerate MOD_TOKEN via init_env.py (1A-1).")
+        raise SystemExit(2)
+    if exposed and not REQUIRE_AUTH:
+        log("!! REFUSING to serve: tunnel/remote exposure with REQUIRE_AUTH=0 "
+            "would publish unauthenticated. Set REQUIRE_AUTH=1 or remove exposure.")
+        raise SystemExit(2)
 
     def _tunnel_watcher(first: str):
         """Log tunnel URL rotations (a.bat rewrites .tunnel-url on restart).

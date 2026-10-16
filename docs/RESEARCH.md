@@ -38,6 +38,8 @@ TikTok LIVE --WS--> bridge (node, ts-node) --POST /api/comment--> moderator :300
   (`_mask`), XFF distrust by default, `?token=` for EventSource/Studio that can't
   set headers, mod console fail-closed 503 when `MOD_TOKEN` unset behind a tunnel
   (`server.py:702-729`). Comments explain *why*, not just *what*.
+  [2026-10-16 N1 Phase-1: the `?token=` fallback is removed (1B-2) — browser
+  surfaces use cookie sessions via /overlay/login, APIs use headers.]
 - `SingleInstanceServer` with `SO_EXCLUSIVEADDRUSE` prevents Windows silent
   split-brain double-bind (`server.py:1205-1243`). Real bug, real fix.
 - `SDK_COVERAGE.md` (untracked at review time) is exactly the right doc: subscribed

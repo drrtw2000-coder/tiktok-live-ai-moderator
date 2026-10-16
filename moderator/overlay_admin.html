@@ -65,22 +65,18 @@
 (function(){
   "use strict";
   var $ = function(id){ return document.getElementById(id); };
-  var tok = "";
-  try{
-    tok = new URLSearchParams(location.search).get("token") ||
-      localStorage.getItem("tt_admin_token") || "";
-  }catch(_){}
-  $("token").value = tok;
+  // Auth: the browser rides the HttpOnly session cookie, established by pasting
+  // the MOD_TOKEN once below (1B-2). No secret lives in localStorage or URLs.
   function toast(msg){
     var t = $("toast"); t.textContent = msg; t.style.display = "block";
     setTimeout(function(){ t.style.display = "none"; }, 2500);
   }
   function api(path, body){
-    var url = path + "?token=" + encodeURIComponent(tok);
+    var url = path;
     var o = {headers: {"Content-Type": "application/json"}};
     if(body !== undefined){ o.method = "POST"; o.body = JSON.stringify(body); }
     return fetch(url, o).then(function(r){
-      if(r.status === 401) throw new Error("bad token (401)");
+      if(r.status === 401) throw new Error("bad token (401) - log in again");
       if(!r.ok) throw new Error("http " + r.status);
       return r.json();
     });
@@ -136,11 +132,15 @@
       .catch(function(e){ toast("Reload failed: " + e.message); });
   };
   $("b_token").onclick = function(){
-    tok = $("token").value.trim();
-    try{ localStorage.setItem("tt_admin_token", tok); }catch(_){}
-    toast("Token saved — reloading");
-    api("/api/overlay-config").then(function(d){ fill(d.config); refreshStats(); })
-      .catch(function(e){ toast("Token rejected: " + e.message); });
+    var tok = $("token").value.trim();
+    $("token").value = "";
+    fetch("/api/mod-session", {method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({token: tok})}).then(function(r){
+      if(!r.ok) throw new Error("rejected");
+      toast("Session established - reloading");
+      location.reload();
+    }).catch(function(e){ toast("Token rejected: " + e.message); });
   };
   $("b_copy").onclick = function(){
     var l = buildLink();

@@ -33,7 +33,15 @@ if errorlevel 1 (
 REM -- first run: create .env from the template --------------------------------
 if not exist ".env" (
   copy /y ".env.example" ".env" >nul
-  echo [i] Created moderator\.env - edit API_TOKEN / UPSTREAM_TTLIVE_URL if needed.
+  echo [i] Created moderator\.env - edit UPSTREAM_TTLIVE_URL if needed.
+)
+
+REM -- N1: replace placeholder tokens with real secrets (idempotent) ----------
+%PY% init_env.py
+if errorlevel 1 (
+  echo [ERROR] Could not set API_TOKEN / MOD_TOKEN - see the message above.
+  pause
+  exit /b 1
 )
 
 REM -- read PORT from .env (default 3002) --------------------------------------

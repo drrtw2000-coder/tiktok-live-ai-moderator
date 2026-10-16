@@ -92,19 +92,12 @@
   "use strict";
   var feed = document.getElementById("feed"), queue = document.getElementById("queue"),
       filter = document.getElementById("filter"), seen = new Set();
-  // Propagate ?token= from the page URL into every mod-gated call.
-  // EventSource cannot set headers, so the token must ride the query string.
-  var PAGE_TOKEN = "";
-  try{ PAGE_TOKEN = (new URLSearchParams(location.search).get("token") || ""); }catch(_){}
+  // Auth: the browser rides the HttpOnly session cookie (POST /api/mod-session
+  // or /overlay/login). Same-origin fetch and EventSource send it automatically;
+  // no credential ever appears in a URL (1B-2).
   function withToken(url){
-    if(!PAGE_TOKEN) return url;
-    return url + (url.indexOf("?") >= 0 ? "&" : "?") + "token=" + encodeURIComponent(PAGE_TOKEN);
+    return url;
   }
-  // Scrub the token from the address bar after load (history/shoulder-surf).
-  try{ if(PAGE_TOKEN && history.replaceState){
-    var u = new URL(location.href); u.searchParams.delete("token");
-    history.replaceState(null, "", u.pathname + u.search + u.hash);
-  }}catch(_){}
   function esc(s){return String(s).replace(/[&<>"']/g,function(c){
     return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c];});}
   var FG = document.getElementById("f-green"),
@@ -153,8 +146,12 @@
       while(queue.children.length > 50) queue.removeChild(queue.lastChild);
     }
   }
+  function needLogin(r){
+    if(r && r.status === 401){ location.href = "/overlay/login"; throw 0; }
+    return r;
+  }
   function refreshStats(){
-    fetch(withToken("/api/stats")).then(function(r){return r.json();}).then(function(s){
+    fetch(withToken("/api/stats")).then(needLogin).then(function(r){return r.json();}).then(function(s){
       document.getElementById("s-rec").textContent = s.received || 0;
       document.getElementById("s-ok").textContent = s.allowed || 0;
       document.getElementById("s-flag").textContent = s.flagged || 0;
@@ -194,7 +191,7 @@
     // keeps flowing.
     var url = withToken("/api/feed?channel=all&limit=50" +
       (lastModId ? "&since=" + encodeURIComponent(lastModId) : ""));
-    return fetch(url).then(function(r){
+    return fetch(url).then(needLogin).then(function(r){
       if(!r.ok) throw new Error("http " + r.status);
       return r.json();
     }).then(function(d){
@@ -226,7 +223,7 @@
       setTimeout(connect, jitter(retry));
     };
   }
-  fetch(withToken("/api/flags?limit=20")).then(function(r){return r.json();}).then(function(d){
+  fetch(withToken("/api/flags?limit=20")).then(needLogin).then(function(r){return r.json();}).then(function(d){
     (d.flags || []).reverse().forEach(function(f){
       render({id: "seed-" + f.ts + "-" + (f.tt_id || Math.random()),
         username: f.username, text: f.text, timestamp: f.ts,

@@ -402,7 +402,7 @@ needs `.\`):
 
 * Gifts overlay, remote: `<tunnel-url>/overlay/chat` (printed + in `public-link.txt`)
 * Gifts overlay, local: `http://127.0.0.1:3002/overlay/chat`
-* Overlay control (never on stream): `/overlay/admin?token=MOD_TOKEN` — toggles,
+* Overlay control (never on stream): `/overlay/login` (MOD_TOKEN once, session cookie after) — toggles,
   timings and Studio link builder, pushed live to connected overlays.
   (`MOD_CONSOLE=1` re-enables the retired comment-mod console.)
 * One bridge per streamer: a second window for the same `@user` warns and asks to take over.
